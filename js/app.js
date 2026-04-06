@@ -8,8 +8,16 @@
   let cloudSyncTimer = null;
   let authUnsubscribe = null;
 
+  const PROJECT_SORT_STORAGE = "pft_project_sort";
+
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const CURRENCY_FLAG = {
+    USD: "🇺🇸",
+    ZAR: "🇿🇦",
+    EUR: "🇪🇺",
+    GBP: "🇬🇧",
+  };
 
   function sym(code) {
     const c = P.CURRENCIES.find((x) => x.code === code);
@@ -35,6 +43,63 @@
     const to = r[book] || 1;
     const usd = amount / from;
     return usd * to;
+  }
+
+  function roundMoney(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return 0;
+    return Math.round(x * 100) / 100;
+  }
+
+  /** Convert a value already expressed in `fromBook` into `toBook` using USD bridge (rates = units per 1 USD). */
+  function convertBookAmount(amount, fromBook, toBook) {
+    const r = rates();
+    const a = Number(amount) || 0;
+    if (fromBook === toBook) return roundMoney(a);
+    const from = r[fromBook] || 1;
+    const to = r[toBook] || 1;
+    if (!from || !to) return roundMoney(a);
+    return roundMoney((a / from) * to);
+  }
+
+  /**
+   * Call with state.settings.bookCurrency already set to `newBook`.
+   * Recomputes stored book amounts so totals match FX (not just the symbol).
+   */
+  function revalueAllBookAmounts(oldBook, newBook) {
+    if (oldBook === newBook) return;
+    state.transactions.forEach((t) => {
+      if (t.originalAmount != null && t.originalCurrency) {
+        t.amountBook = roundMoney(toBook(Number(t.originalAmount), t.originalCurrency));
+      } else {
+        t.amountBook = convertBookAmount(t.amountBook, oldBook, newBook);
+      }
+    });
+    state.projects.forEach((p) => {
+      p.targetMonthlyProfit = convertBookAmount(p.targetMonthlyProfit || 0, oldBook, newBook);
+      p.estimatedCost = convertBookAmount(p.estimatedCost || 0, oldBook, newBook);
+    });
+    state.budgets.forEach((b) => {
+      b.monthlyLimit = convertBookAmount(b.monthlyLimit || 0, oldBook, newBook);
+    });
+    state.personalItems.forEach((it) => {
+      it.purchasePrice = convertBookAmount(it.purchasePrice || 0, oldBook, newBook);
+      it.healthBenefitPerUse = convertBookAmount(it.healthBenefitPerUse || 0, oldBook, newBook);
+      it.timeSavingsPerUse = convertBookAmount(it.timeSavingsPerUse || 0, oldBook, newBook);
+      it.enjoymentValuePerUse = convertBookAmount(it.enjoymentValuePerUse || 0, oldBook, newBook);
+    });
+    state.usageLogs.forEach((u) => {
+      if (u.valueGenerated != null) u.valueGenerated = convertBookAmount(u.valueGenerated, oldBook, newBook);
+    });
+  }
+
+  /** After rate edits (same book currency), refresh transaction book amounts from originals. */
+  function recomputeTransactionAmountsFromOriginals() {
+    state.transactions.forEach((t) => {
+      if (t.originalAmount != null && t.originalCurrency) {
+        t.amountBook = roundMoney(toBook(Number(t.originalAmount), t.originalCurrency));
+      }
+    });
   }
 
   function formatMoney(amount, code) {
@@ -235,12 +300,265 @@
     }, 0);
   }
 
+  /** Sum of monthly category caps for budgets scoped to this project (this month’s envelope total). */
+  function sumProjectBudgetCaps(projectId) {
+    if (!projectId) return 0;
+    return state.budgets
+      .filter((b) => b.projectId === projectId)
+      .reduce((s, b) => s + (Number(b.monthlyLimit) || 0), 0);
+  }
+
+  /** All expense transactions for this project in the current calendar month. */
+  function projectExpenseThisMonth(projectId) {
+    if (!projectId) return 0;
+    const { start, end } = currentMonthRange();
+    return state.transactions.reduce((sum, t) => {
+      if (t.projectId !== projectId) return sum;
+      if (t.type !== "expense") return sum;
+      if (!t.date || t.date < start || t.date > end) return sum;
+      return sum + (Number(t.amountBook) || 0);
+    }, 0);
+  }
+
+  function formatBudgetAuditLine(b) {
+    const c = b.createdAt;
+    const u = b.updatedAt;
+    if (!c && !u) return "—";
+    const fmt = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    };
+    const fs = fmt(c);
+    const fu = fmt(u);
+    if (fs && fu && c !== u) return `Set ${fs} · Updated ${fu}`;
+    return fu || fs || "—";
+  }
+
+  function getProjectSort() {
+    try {
+      const v = localStorage.getItem(PROJECT_SORT_STORAGE);
+      if (v === "name" || v === "created" || v === "updated" || v === "status") return v;
+    } catch (_e) {
+      /* ignore */
+    }
+    return "name";
+  }
+
+  function setProjectSort(v) {
+    try {
+      localStorage.setItem(PROJECT_SORT_STORAGE, v);
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+
+  function sortProjectsList(arr, sortKey) {
+    const out = [...arr];
+    const lifeOrder = (lc) => {
+      const i = P.PROJECT_LIFECYCLES.findIndex((x) => x.value === lc);
+      return i >= 0 ? i : 999;
+    };
+    out.sort((a, b) => {
+      if (sortKey === "name") return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      if (sortKey === "created") {
+        const ca = a.createdAt || "";
+        const cb = b.createdAt || "";
+        if (ca !== cb) return ca.localeCompare(cb);
+        return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      }
+      if (sortKey === "updated") {
+        const ua = a.updatedAt || "";
+        const ub = b.updatedAt || "";
+        if (ua !== ub) return ub.localeCompare(ua);
+        return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      }
+      if (sortKey === "status") {
+        const d = lifeOrder(a.lifecycle) - lifeOrder(b.lifecycle);
+        if (d !== 0) return d;
+        return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      }
+      return 0;
+    });
+    return out;
+  }
+
+  function monthRangeFromDate(iso) {
+    if (!iso) return currentMonthRange();
+    const d = parseISODate(iso);
+    if (!d || Number.isNaN(d.getTime())) return currentMonthRange();
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const pad = (n) => String(n).padStart(2, "0");
+    const start = `${y}-${pad(m + 1)}-01`;
+    const end = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+    return { start, end };
+  }
+
+  function normCat(s) {
+    return (s || "").trim().toLowerCase();
+  }
+
+  function budgetsForExpenseLike(tx) {
+    if (!tx || tx.type !== "expense") return [];
+    const txCat = normCat(tx.category);
+    if (!txCat) return [];
+    return state.budgets.filter((b) => {
+      if (normCat(b.category) !== txCat) return false;
+      if (b.projectId) return b.projectId === (tx.projectId || null);
+      return true;
+    });
+  }
+
+  function expenseBudgetFlag(tx) {
+    if (!tx || tx.type !== "expense") return "";
+    return budgetsForExpenseLike(tx).length ? "budgeted" : "unbudgeted";
+  }
+
+  function spentForBudgetInRange(budget, start, end, excludeTxId) {
+    const cat = normCat(budget.category);
+    return state.transactions.reduce((sum, t) => {
+      if (t.id === excludeTxId) return sum;
+      if (t.type !== "expense") return sum;
+      if (!t.date || t.date < start || t.date > end) return sum;
+      if (normCat(t.category) !== cat) return sum;
+      if (budget.projectId && t.projectId !== budget.projectId) return sum;
+      return sum + (Number(t.amountBook) || 0);
+    }, 0);
+  }
+
+  async function confirmExpenseBudgetImpact(nextTx, editingId) {
+    if (!nextTx || nextTx.type !== "expense") return true;
+    if (!nextTx.category || !nextTx.date) return true;
+    const matched = budgetsForExpenseLike(nextTx);
+    if (!matched.length) {
+      let extra = "";
+      if (nextTx.projectId) {
+        const scoped = state.budgets.filter((b) => b.projectId === nextTx.projectId);
+        if (scoped.length) {
+          const { start, end } = monthRangeFromDate(nextTx.date);
+          const alloc = scoped.reduce((s, b) => s + (Number(b.monthlyLimit) || 0), 0);
+          const used = scoped.reduce((s, b) => s + spentForBudgetInRange(b, start, end, editingId), 0);
+          const rem = alloc - used;
+          extra = `\n\nThis project currently has ${formatMoney(alloc)} budgeted across other categories, with ${formatMoney(Math.max(0, rem))} remaining.`;
+        }
+      }
+      return warningConfirm({
+        title: "Unbudgeted expense",
+        message: `No budget is set for "${nextTx.category}"${nextTx.projectId ? " in this project" : ""} this month.${extra}\n\nProceed anyway?`,
+        proceedLabel: "Proceed",
+        cancelLabel: "Cancel",
+      });
+    }
+    const { start, end } = monthRangeFromDate(nextTx.date);
+    const nextAmount = Number(nextTx.amountBook) || 0;
+    const exceeded = matched
+      .map((b) => {
+        const spent = spentForBudgetInRange(b, start, end, editingId);
+        const after = spent + nextAmount;
+        const limit = Number(b.monthlyLimit) || 0;
+        const over = after - limit;
+        return { b, after, limit, over };
+      })
+      .filter((x) => x.over > 0.0001);
+    if (!exceeded.length) return true;
+    const msg = exceeded
+      .map((x) => {
+        const scope = x.b.projectId ? projectById(x.b.projectId)?.name || "Project" : "Global";
+        return `${scope} · ${x.b.category}: ${formatMoney(x.after)} / ${formatMoney(x.limit)} (over ${formatMoney(x.over)})`;
+      })
+      .join("\n");
+    return warningConfirm({
+      title: "Budget limit exceeded",
+      message: `This expense exceeds budget:\n\n${msg}\n\nProceed anyway?`,
+      proceedLabel: "Proceed",
+      cancelLabel: "Cancel",
+    });
+  }
+
   function openModal(id) {
     $(id).classList.add("open");
   }
 
   function closeModals() {
     $$(".modal-overlay").forEach((el) => el.classList.remove("open"));
+  }
+
+  function warningConfirm(opts) {
+    const ov = $("#modal-warning-confirm");
+    const modalBox = $("#warning-confirm-box");
+    const titleEl = $("#warning-confirm-title");
+    const msgEl = $("#warning-confirm-message");
+    const cancelBtn = $("#btn-warning-cancel");
+    const proceedBtn = $("#btn-warning-proceed");
+    if (!ov || !titleEl || !msgEl || !cancelBtn || !proceedBtn) {
+      return Promise.resolve(confirm((opts && opts.message) || "Proceed?"));
+    }
+    const title = (opts && opts.title) || "Warning";
+    const message = (opts && opts.message) || "Proceed?";
+    const proceedLabel = (opts && opts.proceedLabel) || "Proceed";
+    const cancelLabel = (opts && opts.cancelLabel) || "Cancel";
+    const variant = opts && opts.variant === "danger" ? "danger" : "warning";
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+    proceedBtn.textContent = proceedLabel;
+    cancelBtn.textContent = cancelLabel;
+    proceedBtn.className = "btn " + (variant === "danger" ? "btn-danger" : "btn-primary");
+    if (modalBox) {
+      modalBox.classList.toggle("warning-modal--danger", variant === "danger");
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanup = (result) => {
+        if (done) return;
+        done = true;
+        ov.classList.remove("open");
+        modalBox?.classList.remove("warning-modal--danger");
+        proceedBtn.className = "btn btn-primary";
+        proceedBtn.removeEventListener("click", onProceed);
+        cancelBtn.removeEventListener("click", onCancel);
+        ov.removeEventListener("click", onBackdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(result);
+      };
+      const onProceed = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+      const onBackdrop = (e) => {
+        if (e.target === ov) cleanup(false);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") cleanup(false);
+      };
+      proceedBtn.addEventListener("click", onProceed);
+      cancelBtn.addEventListener("click", onCancel);
+      ov.addEventListener("click", onBackdrop);
+      document.addEventListener("keydown", onKey);
+      ov.classList.add("open");
+    });
+  }
+
+  function recordFxAudit(summary) {
+    if (!state._meta || typeof state._meta !== "object") state._meta = {};
+    state._meta.fxLastUpdatedAt = new Date().toISOString();
+    state._meta.fxLastUpdatedSummary = summary || "";
+    updateFxAuditUi();
+  }
+
+  function updateFxAuditUi() {
+    const el = $("#fx-conversion-audit");
+    if (!el) return;
+    const iso = state._meta && state._meta.fxLastUpdatedAt;
+    const sum = (state._meta && state._meta.fxLastUpdatedSummary) || "";
+    if (!iso) {
+      el.textContent = "";
+      el.hidden = true;
+      return;
+    }
+    const when = new Date(iso);
+    const dt = when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    el.textContent = `Converted at ${dt}${sum ? " — " + sum : ""}.`;
+    el.hidden = false;
   }
 
   function isMobileNav() {
@@ -286,6 +604,7 @@
   }
 
   function fillSelect(sel, options, getVal, getLabel, emptyLabel) {
+    if (!sel) return;
     sel.innerHTML = "";
     if (emptyLabel !== undefined) {
       const o = document.createElement("option");
@@ -315,7 +634,58 @@
     fillSelect($("#set-book"), P.CURRENCIES, (x) => x.code, (x) => `${x.code} (${x.symbol})`);
     fillSelect($("#tx-currency"), P.CURRENCIES, (x) => x.code, (x) => `${x.code} ${x.symbol}`);
 
-    $("#set-book").value = state.settings.bookCurrency || "USD";
+    const book = state.settings.bookCurrency || "USD";
+    $("#set-book").value = book;
+    renderHeaderCurrency(book);
+    renderHeaderCurrencyMenu();
+  }
+
+  function renderHeaderCurrency(bookCode) {
+    const code = bookCode || state.settings.bookCurrency || "USD";
+    const cur = P.CURRENCIES.find((c) => c.code === code) || P.CURRENCIES[0];
+    const chip = $("#header-book-cur");
+    const flagEl = $("#header-book-cur-flag");
+    const symbolEl = $("#header-book-cur-symbol");
+    if (flagEl) flagEl.textContent = CURRENCY_FLAG[cur.code] || "💱";
+    if (symbolEl) symbolEl.textContent = cur.symbol;
+    if (chip) chip.title = `Book currency: ${cur.code} (${cur.name})`;
+  }
+
+  function renderHeaderCurrencyMenu() {
+    const menu = $("#header-currency-menu");
+    if (!menu) return;
+    const activeCode = state.settings.bookCurrency || "USD";
+    menu.innerHTML = "";
+    P.CURRENCIES.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "currency-option" + (c.code === activeCode ? " active" : "");
+      btn.setAttribute("data-currency", c.code);
+      btn.innerHTML = `
+        <span class="currency-option-flag">${CURRENCY_FLAG[c.code] || "💱"}</span>
+        <span class="currency-option-meta">
+          <span class="currency-option-code">${c.code} ${c.symbol}</span>
+          <span class="currency-option-name">${escapeHtml(c.name)}</span>
+        </span>`;
+      menu.appendChild(btn);
+    });
+  }
+
+  function setCurrencyMenuOpen(open) {
+    const menu = $("#header-currency-menu");
+    const chip = $("#header-book-cur");
+    if (!menu || !chip) return;
+    if (open) {
+      menu.hidden = false;
+      menu.classList.add("open");
+      chip.setAttribute("aria-expanded", "true");
+    } else {
+      menu.classList.remove("open");
+      chip.setAttribute("aria-expanded", "false");
+      setTimeout(() => {
+        if (!menu.classList.contains("open")) menu.hidden = true;
+      }, 200);
+    }
   }
 
   function escapeHtml(s) {
@@ -382,7 +752,9 @@
 
   function renderDashboard() {
     const book = state.settings.bookCurrency || "USD";
-    $("#dash-book-cur").textContent = sym(book);
+    const dashBook = $("#dash-book-cur");
+    if (dashBook) dashBook.textContent = sym(book);
+    renderHeaderCurrency(book);
     let inc = 0;
     let exp = 0;
     state.transactions.forEach((t) => {
@@ -404,18 +776,21 @@
       const tr = document.createElement("tr");
       const proj = t.projectId ? projectById(t.projectId) : null;
       const label = proj ? proj.name : t.itemId ? itemById(t.itemId)?.name || "Asset" : "—";
+      const expenseFlag = expenseBudgetFlag(t);
       tr.innerHTML = `
         <td>${escapeHtml(t.date || "")}</td>
         <td>${escapeHtml(label)}</td>
-        <td><span class="badge ${t.type === "income" ? "badge-income" : "badge-expense"}">${t.type}</span></td>
+        <td><span class="badge ${t.type === "income" ? "badge-income" : `badge-expense ${expenseFlag === "unbudgeted" ? "badge-unbudgeted" : "badge-budgeted"}`}">${t.type}</span></td>
         <td>${formatMoney(t.amountBook)}</td>`;
       tbody.appendChild(tr);
     });
 
     const rt = $("#table-recurring tbody");
     rt.innerHTML = "";
+    const { start: monthStart, end: monthEnd } = currentMonthRange();
     state.transactions
       .filter((t) => t.recurring && t.nextDueDate)
+      .filter((t) => t.nextDueDate >= monthStart && t.nextDueDate <= monthEnd)
       .sort((a, b) => (a.nextDueDate || "").localeCompare(b.nextDueDate || ""))
       .slice(0, 15)
       .forEach((t) => {
@@ -438,6 +813,34 @@
       bmini.appendChild(tr);
     });
     $("#dash-budget-summary").textContent = `${state.budgets.length} active · ${start} → ${end}`;
+
+    const ubt = $("#table-unbudgeted-mini tbody");
+    if (ubt) {
+      ubt.innerHTML = "";
+      const unbudgetedByCat = new Map();
+      state.transactions.forEach((t) => {
+        if (!txInMonth(t, start, end)) return;
+        if (expenseBudgetFlag(t) !== "unbudgeted") return;
+        const cat = (t.category || "Uncategorized").trim() || "Uncategorized";
+        unbudgetedByCat.set(cat, (unbudgetedByCat.get(cat) || 0) + (Number(t.amountBook) || 0));
+      });
+      const rows = Array.from(unbudgetedByCat.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      rows.forEach(([cat, amt]) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${escapeHtml(cat)}</td><td>${formatMoney(amt)}</td>`;
+        ubt.appendChild(tr);
+      });
+      if (!rows.length) {
+        ubt.innerHTML = `<tr><td colspan="2" class="empty-state">No unbudgeted spend this month.</td></tr>`;
+      }
+      const ubSummary = $("#dash-unbudgeted-summary");
+      if (ubSummary) {
+        const total = Array.from(unbudgetedByCat.values()).reduce((sum, v) => sum + v, 0);
+        ubSummary.textContent = `${unbudgetedByCat.size} categories · ${formatMoney(total)}`;
+      }
+    }
 
     drawProjectChart();
   }
@@ -545,9 +948,10 @@
       const pl = t.projectId ? projectById(t.projectId)?.name : "";
       const il = t.itemId ? itemById(t.itemId)?.name : "";
       const loc = [pl, il].filter(Boolean).join(" · ") || "—";
+      const expenseFlag = expenseBudgetFlag(t);
       tr.innerHTML = `
         <td>${escapeHtml(t.date || "")}</td>
-        <td><span class="badge ${t.type === "income" ? "badge-income" : "badge-expense"}">${t.type}</span></td>
+        <td><span class="badge ${t.type === "income" ? "badge-income" : `badge-expense ${expenseFlag === "unbudgeted" ? "badge-unbudgeted" : "badge-budgeted"}`}">${t.type}</span></td>
         <td>${formatMoney(t.amountBook)}</td>
         <td>${escapeHtml(t.category || "")}</td>
         <td>${escapeHtml(t.description || "")}</td>
@@ -562,27 +966,41 @@
       const ed = e.target.closest("[data-edit-tx]");
       const del = e.target.closest("[data-del-tx]");
       if (ed) openTransactionModal(ed.getAttribute("data-edit-tx"));
-      if (del) deleteTransaction(del.getAttribute("data-del-tx"));
+      if (del) void deleteTransaction(del.getAttribute("data-del-tx"));
     };
   }
 
-  function deleteTransaction(id) {
-    if (!confirm("Delete this transaction?")) return;
+  async function deleteTransaction(id) {
+    const ok = await warningConfirm({
+      title: "Delete transaction",
+      message: "Delete this transaction? This cannot be undone.",
+      proceedLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
     state.transactions = state.transactions.filter((t) => t.id !== id);
     save();
     toast("Transaction removed");
     renderLedger();
     renderDashboard();
+    renderBudgets();
+    renderProjects();
+    if ($("#view-project-detail")?.classList.contains("active")) renderProjectDetail();
+    if ($("#view-asset-detail")?.classList.contains("active")) renderAssetDetail();
   }
 
   function renderProjects() {
+    const sortSel = $("#project-sort");
+    if (sortSel) sortSel.value = getProjectSort();
     const host = $("#project-cards");
     host.innerHTML = "";
     if (!state.projects.length) {
       host.innerHTML = `<div class="card empty-state"><strong>No projects yet</strong>Create one to track income and expenses.</div>`;
       return;
     }
-    state.projects.forEach((p) => {
+    const sortKey = getProjectSort();
+    sortProjectsList(state.projects, sortKey).forEach((p) => {
       const s = projectSummary(p.id);
       const lc = p.lifecycle || "in_progress";
       const life = P.PROJECT_LIFECYCLES.find((x) => x.value === lc);
@@ -596,7 +1014,7 @@
         <div class="mini-stats">
           <div class="mini-stat"><span>Income</span><strong>${formatMoney(s.income)}</strong></div>
           <div class="mini-stat"><span>Expense</span><strong>${formatMoney(s.expense)}</strong></div>
-          <div class="mini-stat"><span>Net</span><strong style="color:${s.net >= 0 ? "var(--success)" : "var(--danger)"}">${formatMoney(s.net)}</strong></div>
+          <div class="mini-stat"><span>Net</span><strong class="${s.net >= 0 ? "project-net-positive" : "project-net-negative"}">${formatMoney(s.net)}</strong></div>
         </div>
         <div class="row-actions" style="margin-top:1rem">
           <button type="button" class="btn btn-sm btn-primary" data-open-project="${escapeHtml(p.id)}">Open</button>
@@ -659,15 +1077,26 @@
     $("#detail-tags").style.color = "var(--text-muted)";
     $("#detail-tags").style.marginTop = "0.5rem";
 
+    const allocCaps = sumProjectBudgetCaps(p.id);
+    const spentThisMonth = monthExp;
+    const remBudget = allocCaps - spentThisMonth;
+    $("#detail-budget-alloc").textContent = formatMoney(allocCaps);
+    $("#detail-budget-spent").textContent = formatMoney(spentThisMonth);
+    const remEl = $("#detail-budget-rem");
+    remEl.textContent = formatMoney(remBudget);
+    remEl.style.color =
+      remBudget < -0.0001 ? "var(--danger)" : remBudget > 0.0001 ? "var(--success)" : "var(--text)";
+
     const tb = $("#table-project-tx tbody");
     tb.innerHTML = "";
     transactionsForProject(p.id)
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
       .forEach((t) => {
         const tr = document.createElement("tr");
+        const expenseFlag = expenseBudgetFlag(t);
         tr.innerHTML = `
           <td>${escapeHtml(t.date || "")}</td>
-          <td><span class="badge ${t.type === "income" ? "badge-income" : "badge-expense"}">${t.type}</span></td>
+          <td><span class="badge ${t.type === "income" ? "badge-income" : `badge-expense ${expenseFlag === "unbudgeted" ? "badge-unbudgeted" : "badge-budgeted"}`}">${t.type}</span></td>
           <td>${formatMoney(t.amountBook)}</td>
           <td>${escapeHtml(t.category || "")}</td>
           <td>${escapeHtml(t.description || "")}</td>
@@ -681,7 +1110,7 @@
       const ed = e.target.closest("[data-edit-tx]");
       const del = e.target.closest("[data-del-tx]");
       if (ed) openTransactionModal(ed.getAttribute("data-edit-tx"));
-      if (del) deleteTransaction(del.getAttribute("data-del-tx"));
+      if (del) void deleteTransaction(del.getAttribute("data-del-tx"));
     };
   }
 
@@ -770,11 +1199,20 @@
       const d = e.target.closest("[data-del-us]");
       if (!d) return;
       const id = d.getAttribute("data-del-us");
-      if (!confirm("Delete usage log?")) return;
-      state.usageLogs = state.usageLogs.filter((u) => u.id !== id);
-      save();
-      renderAssetDetail();
-      toast("Usage log removed");
+      void (async () => {
+        const ok = await warningConfirm({
+          title: "Delete usage log",
+          message: "Delete this usage log entry?",
+          proceedLabel: "Delete",
+          cancelLabel: "Cancel",
+          variant: "danger",
+        });
+        if (!ok) return;
+        state.usageLogs = state.usageLogs.filter((u) => u.id !== id);
+        save();
+        renderAssetDetail();
+        toast("Usage log removed");
+      })();
     };
 
     const at = $("#table-asset-tx tbody");
@@ -799,26 +1237,58 @@
       const ed = e.target.closest("[data-edit-tx]");
       const del = e.target.closest("[data-del-tx]");
       if (ed) openTransactionModal(ed.getAttribute("data-edit-tx"));
-      if (del) deleteTransaction(del.getAttribute("data-del-tx"));
+      if (del) void deleteTransaction(del.getAttribute("data-del-tx"));
     };
   }
 
+  function renderProjectBudgetRollup() {
+    const tb = $("#table-project-budget-rollup tbody");
+    if (!tb) return;
+    tb.innerHTML = "";
+    if (!state.projects.length) {
+      tb.innerHTML = `<tr><td colspan="4" class="empty-state">No projects yet.</td></tr>`;
+      return;
+    }
+    const sorted = [...state.projects].sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
+    );
+    sorted.forEach((p) => {
+      const alloc = sumProjectBudgetCaps(p.id);
+      const spent = projectExpenseThisMonth(p.id);
+      const rem = alloc - spent;
+      const tr = document.createElement("tr");
+      if (rem < -0.0001) tr.classList.add("budget-row-over");
+      tr.innerHTML = `
+        <td>${escapeHtml(p.name)}</td>
+        <td>${formatMoney(alloc)}</td>
+        <td>${formatMoney(spent)}</td>
+        <td>${formatMoney(rem)}</td>`;
+      tb.appendChild(tr);
+    });
+  }
+
   function renderBudgets() {
+    renderProjectBudgetRollup();
     const tb = $("#table-budgets tbody");
     tb.innerHTML = "";
     if (!state.budgets.length) {
-      tb.innerHTML = `<tr><td colspan="5" class="empty-state">No budgets — add monthly caps for categories.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="7" class="empty-state">No budgets — add monthly caps for categories.</td></tr>`;
       return;
     }
     state.budgets.forEach((b) => {
       const spent = budgetSpentThisMonth(b);
+      const over = spent > (Number(b.monthlyLimit) || 0);
+      const remaining = Math.max(0, (Number(b.monthlyLimit) || 0) - spent);
       const scope = b.projectId ? projectById(b.projectId)?.name || "Project" : "Global";
       const tr = document.createElement("tr");
+      if (over) tr.classList.add("budget-row-over");
       tr.innerHTML = `
         <td>${escapeHtml(scope)}</td>
         <td>${escapeHtml(b.category)}</td>
         <td>${formatMoney(b.monthlyLimit)}</td>
-        <td>${formatMoney(spent)}</td>
+        <td class="${over ? "budget-cell-over" : ""}">${formatMoney(spent)}${over ? ' <span class="badge badge-over">Over</span>' : ""}</td>
+        <td>${formatMoney(remaining)}</td>
+        <td class="budget-audit-cell" title="${escapeHtml(formatBudgetAuditLine(b))}">${escapeHtml(formatBudgetAuditLine(b))}</td>
         <td class="row-actions">
           <button type="button" class="btn btn-sm" data-edit-bd="${escapeHtml(b.id)}">Edit</button>
           <button type="button" class="btn btn-sm btn-danger" data-del-bd="${escapeHtml(b.id)}">Del</button>
@@ -831,11 +1301,21 @@
       if (ed) openBudgetModal(ed.getAttribute("data-edit-bd"));
       if (del) {
         const id = del.getAttribute("data-del-bd");
-        if (!confirm("Delete budget?")) return;
-        state.budgets = state.budgets.filter((b) => b.id !== id);
-        save();
-        renderBudgets();
-        toast("Budget removed");
+        void (async () => {
+          const ok = await warningConfirm({
+            title: "Delete budget",
+            message: "Delete this budget? Future spend will no longer be compared to this cap.",
+            proceedLabel: "Delete",
+            cancelLabel: "Cancel",
+            variant: "danger",
+          });
+          if (!ok) return;
+          state.budgets = state.budgets.filter((b) => b.id !== id);
+          save();
+          renderBudgets();
+          renderDashboard();
+          toast("Budget removed");
+        })();
       }
     };
   }
@@ -854,6 +1334,7 @@
     });
     ensureAuthListener();
     void renderCloudControls();
+    updateFxAuditUi();
   }
 
   function refreshAllViews() {
@@ -1113,9 +1594,18 @@
     openModal("#modal-budget");
   }
 
-  function deleteProjectConfirmed() {
+  async function deleteProjectConfirmed() {
     const id = selectedProjectId;
-    if (!id || !confirm("Delete project and its linked transactions & budgets?")) return;
+    if (!id) return;
+    const ok = await warningConfirm({
+      title: "Delete project",
+      message:
+        "Delete this project and all linked transactions and budgets in this browser? This cannot be undone.",
+      proceedLabel: "Delete project",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
     state.transactions = state.transactions.filter((t) => t.projectId !== id);
     state.budgets = state.budgets.filter((b) => b.projectId !== id);
     state.projects = state.projects.filter((p) => p.id !== id);
@@ -1125,9 +1615,17 @@
     navigate("projects");
   }
 
-  function deleteAssetConfirmed() {
+  async function deleteAssetConfirmed() {
     const id = selectedItemId;
-    if (!id || !confirm("Delete asset, its expenses, and usage logs?")) return;
+    if (!id) return;
+    const ok = await warningConfirm({
+      title: "Delete asset",
+      message: "Delete this asset and its linked expenses and usage logs? This cannot be undone.",
+      proceedLabel: "Delete asset",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
     state.transactions = state.transactions.filter((t) => t.itemId !== id);
     state.usageLogs = state.usageLogs.filter((u) => u.itemId !== id);
     state.personalItems = state.personalItems.filter((i) => i.id !== id);
@@ -1146,6 +1644,39 @@
     $("#theme-toggle").addEventListener("click", () => {
       if (window.PFTTheme) window.PFTTheme.toggle();
     });
+    $("#header-book-cur")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const menu = $("#header-currency-menu");
+      setCurrencyMenuOpen(!(menu && menu.classList.contains("open")));
+    });
+    $("#header-currency-menu")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-currency]");
+      if (!btn) return;
+      const code = btn.getAttribute("data-currency");
+      if (!code) return;
+      const prevBook = state.settings.bookCurrency || "USD";
+      if (code === prevBook) {
+        setCurrencyMenuOpen(false);
+        return;
+      }
+      state.settings.bookCurrency = code;
+      revalueAllBookAmounts(prevBook, code);
+      recordFxAudit(`Book currency set to ${code}`);
+      $("#set-book").value = code;
+      save();
+      renderHeaderCurrency(code);
+      renderHeaderCurrencyMenu();
+      setCurrencyMenuOpen(false);
+      toast(`Switched to ${code} — amounts converted using your FX rates.`);
+      refreshAllViews();
+    });
+    document.addEventListener("click", (e) => {
+      const wrap = e.target.closest(".header-currency-wrap");
+      if (!wrap) setCurrencyMenuOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setCurrencyMenuOpen(false);
+    });
 
     $("#main-nav").addEventListener("click", (e) => {
       const btn = e.target.closest(".nav-pill");
@@ -1159,6 +1690,13 @@
     $("#btn-quick-income").addEventListener("click", () => openTransactionModal(null, { type: "income" }));
 
     $("#btn-new-project").addEventListener("click", () => openProjectModal(null));
+    $("#project-sort")?.addEventListener("change", (e) => {
+      const v = e.target.value;
+      if (v === "name" || v === "created" || v === "updated" || v === "status") {
+        setProjectSort(v);
+        renderProjects();
+      }
+    });
     $("#btn-new-asset").addEventListener("click", () => openAssetModal(null));
     $("#btn-new-budget").addEventListener("click", () => openBudgetModal(null));
 
@@ -1172,14 +1710,14 @@
       openTransactionModal(null, { type: "expense", projectId: selectedProjectId })
     );
     $("#btn-edit-project").addEventListener("click", () => openProjectModal(selectedProjectId));
-    $("#btn-delete-project").addEventListener("click", deleteProjectConfirmed);
+    $("#btn-delete-project").addEventListener("click", () => void deleteProjectConfirmed());
 
     $("#detail-log-usage").addEventListener("click", () => openUsageModal(selectedItemId, null));
     $("#detail-asset-expense").addEventListener("click", () =>
       openTransactionModal(null, { type: "expense", itemId: selectedItemId })
     );
     $("#btn-edit-asset").addEventListener("click", () => openAssetModal(selectedItemId));
-    $("#btn-delete-asset").addEventListener("click", deleteAssetConfirmed);
+    $("#btn-delete-asset").addEventListener("click", () => void deleteAssetConfirmed());
 
     $("#tx-type").addEventListener("change", () => {
       updateTxCategoryDatalist();
@@ -1189,11 +1727,12 @@
     $$("[data-close-modal]").forEach((b) => b.addEventListener("click", closeModals));
     $$(".modal-overlay").forEach((ov) =>
       ov.addEventListener("click", (e) => {
+        if (ov.id === "modal-warning-confirm") return;
         if (e.target === ov) closeModals();
       })
     );
 
-    $("#form-transaction").addEventListener("submit", (e) => {
+    $("#form-transaction").addEventListener("submit", async (e) => {
       e.preventDefault();
       const id = $("#tx-id").value;
       const type = $("#tx-type").value;
@@ -1203,7 +1742,7 @@
         return;
       }
       const cur = $("#tx-currency").value;
-      const amountBook = toBook(amountRaw, cur);
+      const amountBook = roundMoney(toBook(amountRaw, cur));
       const tags = ($("#tx-tags").value || "")
         .split(",")
         .map((s) => s.trim())
@@ -1238,6 +1777,10 @@
 
       if (!payload.projectId) payload.projectId = null;
       if (!payload.itemId) payload.itemId = null;
+      if (!(await confirmExpenseBudgetImpact(payload, id || null))) {
+        toast("Expense canceled");
+        return;
+      }
 
       if (id) {
         const idx = state.transactions.findIndex((t) => t.id === id);
@@ -1261,6 +1804,7 @@
         .map((s) => s.trim())
         .filter(Boolean);
       const lifecycle = $("#pj-lifecycle").value || "in_progress";
+      const now = new Date().toISOString();
       const row = {
         id: id || St.uid(),
         name: $("#pj-name").value.trim(),
@@ -1274,8 +1818,14 @@
       };
       if (id) {
         const idx = state.projects.findIndex((p) => p.id === id);
-        if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...row };
-      } else state.projects.push(row);
+        if (idx >= 0) {
+          const prev = state.projects[idx];
+          state.projects[idx] = { ...prev, ...row, updatedAt: now };
+          if (!state.projects[idx].createdAt) state.projects[idx].createdAt = prev.createdAt || now;
+        }
+      } else {
+        state.projects.push({ ...row, createdAt: now, updatedAt: now });
+      }
       save();
       closeModals();
       toast("Project saved");
@@ -1339,6 +1889,7 @@
     $("#form-budget").addEventListener("submit", (e) => {
       e.preventDefault();
       const id = $("#bd-id").value;
+      const now = new Date().toISOString();
       const row = {
         id: id || St.uid(),
         projectId: $("#bd-project").value || null,
@@ -1348,8 +1899,18 @@
       };
       if (id) {
         const idx = state.budgets.findIndex((b) => b.id === id);
-        if (idx >= 0) state.budgets[idx] = { ...state.budgets[idx], ...row };
-      } else state.budgets.push(row);
+        if (idx >= 0) {
+          const prev = state.budgets[idx];
+          state.budgets[idx] = {
+            ...prev,
+            ...row,
+            updatedAt: now,
+            createdAt: prev.createdAt || now,
+          };
+        }
+      } else {
+        state.budgets.push({ ...row, createdAt: now, updatedAt: now });
+      }
       save();
       closeModals();
       toast("Budget saved");
@@ -1367,7 +1928,8 @@
     $("#ledger-export-csv").addEventListener("click", exportCsv);
 
     $("#btn-save-settings").addEventListener("click", () => {
-      state.settings.bookCurrency = $("#set-book").value;
+      const prevBook = state.settings.bookCurrency || "USD";
+      const newBook = $("#set-book").value || "USD";
       const r = { ...state.settings.ratesFromUSD };
       Object.keys(r).forEach((code) => {
         const inp = document.getElementById("fx-" + code);
@@ -1377,9 +1939,18 @@
         }
       });
       state.settings.ratesFromUSD = r;
+      state.settings.bookCurrency = newBook;
+      if (prevBook !== newBook) {
+        revalueAllBookAmounts(prevBook, newBook);
+        recordFxAudit(`Book currency set to ${newBook}`);
+        toast("Settings saved — book currency changed; amounts converted using FX rates.");
+      } else {
+        recomputeTransactionAmountsFromOriginals();
+        recordFxAudit("Manual FX rates saved; amounts refreshed from originals where available.");
+        toast("Settings saved — transaction amounts refreshed from originals where available.");
+      }
       save();
-      toast("Settings saved");
-      renderDashboard();
+      refreshAllViews();
     });
 
     $("#btn-fx-live")?.addEventListener("click", async () => {
@@ -1399,6 +1970,12 @@
           else if (c !== "USD") skipped.push(c);
         });
         state.settings.ratesFromUSD = next;
+        recomputeTransactionAmountsFromOriginals();
+        recordFxAudit(
+          skipped.length
+            ? `Live FX rates (no live value for: ${skipped.join(", ")})`
+            : "Live FX rates applied"
+        );
         save();
         renderSettings();
         toast(
@@ -1406,7 +1983,7 @@
             ? `FX updated; no live value for: ${skipped.join(", ")}`
             : "FX rates updated from live data"
         );
-        renderDashboard();
+        refreshAllViews();
       } catch (err) {
         toast(err.message || "Could not fetch rates");
       }
@@ -1530,13 +2107,24 @@
     });
 
     $("#btn-reset-all").addEventListener("click", () => {
-      if (!confirm("Erase ALL data in this browser?")) return;
-      localStorage.removeItem(St.STORAGE_KEY);
-      state = St.load();
-      if (!state._meta) state._meta = {};
-      initPresetsUi();
-      toast("Storage cleared");
-      navigate("dashboard");
+      void (async () => {
+        const ok = await warningConfirm({
+          title: "Erase all data",
+          message:
+            "Erase ALL projects, transactions, assets, and settings stored in this browser? This cannot be undone.",
+          proceedLabel: "Erase everything",
+          cancelLabel: "Cancel",
+          variant: "danger",
+        });
+        if (!ok) return;
+        localStorage.removeItem(St.STORAGE_KEY);
+        state = St.load();
+        if (!state._meta) state._meta = {};
+        initPresetsUi();
+        updateFxAuditUi();
+        toast("Storage cleared");
+        navigate("dashboard");
+      })();
     });
 
     window.addEventListener("resize", () => {
@@ -1596,6 +2184,7 @@
     initPresetsUi();
     wireEvents();
     navigate(initialViewFromHash());
+    updateFxAuditUi();
     if (openCloudModal) requestAnimationFrame(() => openModal("#modal-cloud-auth"));
 
     window.addEventListener("hashchange", () => {

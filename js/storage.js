@@ -69,12 +69,23 @@
       if (!Array.isArray(out[k])) out[k] = [];
     });
     out.projects = out.projects.map(normalizeProjectRow);
+    out.budgets = (out.budgets || []).map(normalizeBudgetRow);
     return out;
+  }
+
+  function normalizeBudgetRow(b) {
+    if (!b || typeof b !== "object") return b;
+    const o = { ...b };
+    if (o.createdAt == null) o.createdAt = "";
+    if (o.updatedAt == null) o.updatedAt = o.createdAt || "";
+    return o;
   }
 
   function normalizeProjectRow(p) {
     if (!p || typeof p !== "object") return p;
     const o = { ...p };
+    if (o.createdAt == null) o.createdAt = "";
+    if (o.updatedAt == null) o.updatedAt = o.createdAt || "";
     if (!o.lifecycle) {
       const s = o.status || "active";
       if (s === "paused") o.lifecycle = "on_hold";

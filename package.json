@@ -3,9 +3,18 @@
   "private": true,
   "description": "Static PWA — Vercel injects Supabase public env at build time only",
   "scripts": {
-    "build": "node scripts/inject-env.mjs"
+    "build": "node scripts/inject-env.mjs",
+    "cap:copy": "node scripts/cap-copy.mjs",
+    "cap:sync": "npm run cap:copy && npx cap sync",
+    "cap:sync:all": "npm run build && npm run cap:sync",
+    "cap:open:android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.2.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
     "dotenv": "^16.4.7"
   }
 }

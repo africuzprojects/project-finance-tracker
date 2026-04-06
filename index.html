@@ -70,6 +70,21 @@
             <button type="button" class="nav-pill" data-view="settings">Settings</button>
           </nav>
           <div class="header-tools">
+            <div class="header-currency-wrap">
+              <button
+                type="button"
+                class="book-cur-chip"
+                id="header-book-cur"
+                title="Book currency"
+                aria-label="Change book currency"
+                aria-expanded="false"
+                aria-controls="header-currency-menu"
+              >
+                <span id="header-book-cur-flag" aria-hidden="true">🇿🇦</span>
+                <span id="header-book-cur-symbol">R</span>
+              </button>
+              <div id="header-currency-menu" class="header-currency-menu" hidden></div>
+            </div>
             <button type="button" class="btn btn-ghost btn-icon" id="theme-toggle" title="Toggle light/dark" aria-label="Toggle theme">
               <span id="theme-toggle-icon" aria-hidden="true">◐</span>
             </button>
@@ -85,28 +100,23 @@
       <!-- Dashboard -->
       <section id="view-dashboard" class="view active" aria-label="Dashboard">
         <div class="bento">
-          <div class="card span-3">
-            <p class="card-title">Book currency</p>
-            <div class="stat-value plain" id="dash-book-cur">$</div>
-            <p class="stat-sub" id="dash-period-label">All time · projects only</p>
-          </div>
-          <div class="card span-3">
+          <div class="card span-4">
             <p class="card-title">Total income</p>
             <div class="stat-value plain" id="dash-income">$0</div>
             <p class="stat-sub">Project transactions</p>
           </div>
-          <div class="card span-3">
+          <div class="card span-4">
             <p class="card-title">Total expenses</p>
             <div class="stat-value danger" id="dash-expense">$0</div>
             <p class="stat-sub">Project transactions only</p>
           </div>
-          <div class="card span-3">
+          <div class="card span-4">
             <p class="card-title">Net profit</p>
             <div class="stat-value" id="dash-profit">$0</div>
             <p class="stat-sub" id="dash-roi">ROI —</p>
           </div>
 
-          <div class="card span-8">
+          <div class="card span-4">
             <p class="card-title">Project profit / loss</p>
             <div class="chart-canvas-wrap">
               <canvas class="chart" id="chart-projects" width="800" height="220"></canvas>
@@ -121,6 +131,21 @@
                   <tr>
                     <th>Budget</th>
                     <th>Used</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card span-4">
+            <p class="card-title">Unbudgeted this month</p>
+            <div id="dash-unbudgeted-summary" class="stat-sub"></div>
+            <div class="table-wrap" style="max-height: 200px">
+              <table class="data" id="table-unbudgeted-mini">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Spent</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -145,7 +170,7 @@
             </div>
           </div>
           <div class="card span-6">
-            <p class="card-title">Upcoming recurring</p>
+            <p class="card-title">This month recurring</p>
             <div class="table-wrap" style="max-height: 280px">
               <table class="data" id="table-recurring">
                 <thead>
@@ -228,7 +253,19 @@
             <h2>Projects</h2>
             <p>Phases (build vs market), estimates, and P&amp;L while you ship.</p>
           </div>
-          <button type="button" class="btn btn-primary" id="btn-new-project">+ New project</button>
+          <div class="page-head-actions page-head-actions--projects">
+            <div class="projects-toolbar">
+              <button type="button" class="btn btn-primary" id="btn-new-project">+ New project</button>
+              <div class="project-sort-wrap">
+                <select id="project-sort" class="input project-sort-select" aria-label="Sort projects" title="Sort">
+                  <option value="name">Name A–Z</option>
+                  <option value="created">Created</option>
+                  <option value="updated">Modified</option>
+                  <option value="status">Status</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="grid-cards" id="project-cards"></div>
       </section>
@@ -267,6 +304,24 @@
             <p class="stat-sub" id="detail-phase" style="color: var(--text); font-weight: 600"></p>
             <p class="stat-sub" id="detail-plan"></p>
             <p class="stat-sub" id="detail-tags"></p>
+          </div>
+          <div class="card span-12">
+            <p class="card-title">Budget vs spend (this month)</p>
+            <p class="stat-sub project-budget-rollup-hint">
+              Allocated = sum of monthly category caps for this project. Spent = all expenses tagged to this project in the
+              current calendar month (every category).
+            </p>
+            <div class="mini-stats" style="margin-top: 0.75rem">
+              <div class="mini-stat">
+                <span>Allocated (caps)</span><strong id="detail-budget-alloc">—</strong>
+              </div>
+              <div class="mini-stat">
+                <span>Spent</span><strong id="detail-budget-spent">—</strong>
+              </div>
+              <div class="mini-stat">
+                <span>Remaining</span><strong id="detail-budget-rem">—</strong>
+              </div>
+            </div>
           </div>
           <div class="card span-12">
             <p class="card-title">Transactions</p>
@@ -374,6 +429,26 @@
           <button type="button" class="btn btn-primary" id="btn-new-budget">+ Budget</button>
         </div>
         <div class="card">
+          <p class="card-title">Project budget vs spend (this month)</p>
+          <p class="stat-sub" style="margin-bottom: 0.75rem">
+            Allocated = sum of monthly category caps for this project. Spent = all project expenses this month (every
+            category).
+          </p>
+          <div class="table-wrap">
+            <table class="data" id="table-project-budget-rollup">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Allocated</th>
+                  <th>Spent</th>
+                  <th>Remaining</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
           <div class="table-wrap">
             <table class="data" id="table-budgets">
               <thead>
@@ -382,6 +457,8 @@
                   <th>Category</th>
                   <th>Monthly limit</th>
                   <th>This month</th>
+                  <th>Remaining</th>
+                  <th>Set / updated</th>
                   <th></th>
                 </tr>
               </thead>
@@ -418,6 +495,7 @@
                 <select id="set-book" class="input"></select>
               </div>
               <p class="field-hint">Amounts are stored in book currency using “units of each currency per 1 USD”.</p>
+              <p id="fx-conversion-audit" class="field-hint fx-audit" hidden></p>
               <div class="field">
                 <label class="field-label">Rates (per 1 USD)</label>
                 <div id="fx-fields"></div>
@@ -732,6 +810,24 @@
         </form>
         <div class="field" style="margin-top: 1rem">
           <button type="button" class="btn" id="btn-cloud-google" style="width: 100%">Continue with Google</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal-overlay"
+      id="modal-warning-confirm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="warning-confirm-title"
+      aria-describedby="warning-confirm-message"
+    >
+      <div class="modal warning-modal" id="warning-confirm-box">
+        <h3 id="warning-confirm-title">Warning</h3>
+        <p id="warning-confirm-message" class="warning-message"></p>
+        <div class="modal-actions warning-actions">
+          <button type="button" class="btn btn-ghost" id="btn-warning-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btn-warning-proceed">Proceed</button>
         </div>
       </div>
     </div>

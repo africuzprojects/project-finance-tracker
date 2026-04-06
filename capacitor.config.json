@@ -1,0 +1,11 @@
+{
+  "appId": "com.projectfinancetracker.app",
+  "appName": "Finance Tracker",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
