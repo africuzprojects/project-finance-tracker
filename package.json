@@ -1,0 +1,11 @@
+{
+  "name": "project-finance-tracker",
+  "private": true,
+  "description": "Static PWA — Vercel injects Supabase public env at build time only",
+  "scripts": {
+    "build": "node scripts/inject-env.mjs"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.7"
+  }
+}

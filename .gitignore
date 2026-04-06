@@ -1,0 +1,9 @@
+# Local overrides only — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Optional local env injection (if you copy instead of using Vercel)
+js/env.local.js
+
+node_modules/

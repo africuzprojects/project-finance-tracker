@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1228" />
+    <meta name="description" content="Offline project finance tracker — expenses, income, assets, budgets" />
+    <title>Project Finance Tracker Pro</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="assets/app-icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="icon" href="assets/app-icon-512.png" type="image/png" sizes="512x512" />
+    <link rel="apple-touch-icon" href="assets/app-icon-512.png" />
+    <link rel="stylesheet" href="css/styles.css" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("pft_theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+            document.documentElement.style.colorScheme = t === "light" ? "light" : "dark";
+          } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+            document.documentElement.setAttribute("data-theme", "light");
+            document.documentElement.style.colorScheme = "light";
+          } else {
+            document.documentElement.setAttribute("data-theme", "dark");
+            document.documentElement.style.colorScheme = "dark";
+          }
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="aurora-wrap" aria-hidden="true">
+      <div class="aurora-blob"></div>
+      <div class="aurora-blob"></div>
+      <div class="aurora-blob"></div>
+      <div class="aurora-grid"></div>
+    </div>
+
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="header-bar">
+          <button
+            type="button"
+            class="menu-toggle"
+            id="menu-toggle"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="main-nav"
+          >
+            <span class="menu-icon" aria-hidden="true"></span>
+          </button>
+          <div class="brand">
+            <span class="brand-mark-wrap" aria-hidden="true">
+              <img class="brand-mark" src="assets/app-icon-512.png" alt="" width="50" height="50" decoding="async" />
+            </span>
+            <div>
+              <h1>Finance Tracker Pro</h1>
+              <p>Local + optional cloud sync</p>
+            </div>
+          </div>
+          <nav class="main-nav" id="main-nav" aria-label="Main">
+            <button type="button" class="nav-pill active" data-view="dashboard">Dashboard</button>
+            <button type="button" class="nav-pill" data-view="ledger">Ledger</button>
+            <button type="button" class="nav-pill" data-view="projects">Projects</button>
+            <button type="button" class="nav-pill" data-view="assets">Assets</button>
+            <button type="button" class="nav-pill" data-view="budgets">Budgets</button>
+            <button type="button" class="nav-pill" data-view="settings">Settings</button>
+          </nav>
+          <div class="header-tools">
+            <button type="button" class="btn btn-ghost btn-icon" id="theme-toggle" title="Toggle light/dark" aria-label="Toggle theme">
+              <span id="theme-toggle-icon" aria-hidden="true">◐</span>
+            </button>
+            <div class="header-quick">
+              <button type="button" class="btn btn-primary" id="btn-quick-expense">+ Expense</button>
+              <button type="button" class="btn" id="btn-quick-income">+ Income</button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <div class="drawer-backdrop" id="drawer-backdrop" aria-hidden="true"></div>
+
+      <!-- Dashboard -->
+      <section id="view-dashboard" class="view active" aria-label="Dashboard">
+        <div class="bento">
+          <div class="card span-3">
+            <p class="card-title">Book currency</p>
+            <div class="stat-value plain" id="dash-book-cur">$</div>
+            <p class="stat-sub" id="dash-period-label">All time · projects only</p>
+          </div>
+          <div class="card span-3">
+            <p class="card-title">Total income</p>
+            <div class="stat-value plain" id="dash-income">$0</div>
+            <p class="stat-sub">Project transactions</p>
+          </div>
+          <div class="card span-3">
+            <p class="card-title">Total expenses</p>
+            <div class="stat-value danger" id="dash-expense">$0</div>
+            <p class="stat-sub">Project transactions only</p>
+          </div>
+          <div class="card span-3">
+            <p class="card-title">Net profit</p>
+            <div class="stat-value" id="dash-profit">$0</div>
+            <p class="stat-sub" id="dash-roi">ROI —</p>
+          </div>
+
+          <div class="card span-8">
+            <p class="card-title">Project profit / loss</p>
+            <div class="chart-canvas-wrap">
+              <canvas class="chart" id="chart-projects" width="800" height="220"></canvas>
+            </div>
+          </div>
+          <div class="card span-4">
+            <p class="card-title">Budget burn (this month)</p>
+            <div id="dash-budget-summary" class="stat-sub"></div>
+            <div class="table-wrap" style="max-height: 200px">
+              <table class="data" id="table-budget-mini">
+                <thead>
+                  <tr>
+                    <th>Budget</th>
+                    <th>Used</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card span-6">
+            <p class="card-title">Recent transactions</p>
+            <div class="table-wrap" style="max-height: 280px">
+              <table class="data" id="table-recent">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Project</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card span-6">
+            <p class="card-title">Upcoming recurring</p>
+            <div class="table-wrap" style="max-height: 280px">
+              <table class="data" id="table-recurring">
+                <thead>
+                  <tr>
+                    <th>Next</th>
+                    <th>Label</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ledger -->
+      <section id="view-ledger" class="view" aria-label="Ledger">
+        <div class="page-head">
+          <div>
+            <h2>Full ledger</h2>
+            <p>Filter every income and expense across projects and assets.</p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="btn" id="ledger-export-csv">Export CSV</button>
+          </div>
+        </div>
+        <div class="card span-12" style="margin-bottom: 1rem">
+          <div class="settings-grid">
+            <div class="field">
+              <label class="field-label" for="filter-type">Type</label>
+              <select id="filter-type" class="input">
+                <option value="">All</option>
+                <option value="income">Income</option>
+                <option value="expense">Expense</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="filter-project">Project</label>
+              <select id="filter-project" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="filter-from">From</label>
+              <input type="date" id="filter-from" class="input" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="filter-to">To</label>
+              <input type="date" id="filter-to" class="input" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="filter-search">Search</label>
+              <input type="search" id="filter-search" class="input" placeholder="Description, category, vendor…" />
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-wrap" style="max-height: 520px">
+            <table class="data" id="table-ledger">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Category</th>
+                  <th>Description</th>
+                  <th>Project / Asset</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Projects list -->
+      <section id="view-projects" class="view" aria-label="Projects">
+        <div class="page-head">
+          <div>
+            <h2>Projects</h2>
+            <p>Phases (build vs market), estimates, and P&amp;L while you ship.</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-new-project">+ New project</button>
+        </div>
+        <div class="grid-cards" id="project-cards"></div>
+      </section>
+
+      <!-- Project detail -->
+      <section id="view-project-detail" class="view" aria-label="Project detail">
+        <div class="page-head">
+          <div>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-back-projects">← Projects</button>
+            <h2 id="detail-project-name">Project</h2>
+            <p id="detail-project-desc"></p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="btn" id="btn-edit-project">Edit</button>
+            <button type="button" class="btn btn-primary" id="detail-add-income">+ Income</button>
+            <button type="button" class="btn" id="detail-add-expense" style="border-color: rgba(251,113,133,0.4)">+ Expense</button>
+            <button type="button" class="btn btn-danger" id="btn-delete-project">Delete</button>
+          </div>
+        </div>
+        <div class="bento">
+          <div class="card span-4">
+            <p class="card-title">Target (monthly profit)</p>
+            <div class="stat-value plain" id="detail-target">$0</div>
+            <p class="stat-sub" id="detail-vs-target"></p>
+          </div>
+          <div class="card span-4">
+            <p class="card-title">Income / expense / net</p>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>Income</span><strong id="detail-inc">$0</strong></div>
+              <div class="mini-stat"><span>Expense</span><strong id="detail-exp">$0</strong></div>
+              <div class="mini-stat"><span>Net</span><strong id="detail-net">$0</strong></div>
+            </div>
+          </div>
+          <div class="card span-4">
+            <p class="card-title">Phase &amp; plan</p>
+            <p class="stat-sub" id="detail-phase" style="color: var(--text); font-weight: 600"></p>
+            <p class="stat-sub" id="detail-plan"></p>
+            <p class="stat-sub" id="detail-tags"></p>
+          </div>
+          <div class="card span-12">
+            <p class="card-title">Transactions</p>
+            <div class="table-wrap" style="max-height: 360px">
+              <table class="data" id="table-project-tx">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Assets -->
+      <section id="view-assets" class="view" aria-label="Assets">
+        <div class="page-head">
+          <div>
+            <h2>Personal assets</h2>
+            <p>Cost-per-use, smart ROI, maintenance expenses, usage logs.</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-new-asset">+ Add asset</button>
+        </div>
+        <div class="grid-cards" id="asset-cards"></div>
+      </section>
+
+      <!-- Asset detail -->
+      <section id="view-asset-detail" class="view" aria-label="Asset detail">
+        <div class="page-head">
+          <div>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-back-assets">← Assets</button>
+            <h2 id="detail-asset-name">Asset</h2>
+            <p id="detail-asset-notes"></p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="btn" id="btn-edit-asset">Edit</button>
+            <button type="button" class="btn btn-primary" id="detail-log-usage">Log usage</button>
+            <button type="button" class="btn" id="detail-asset-expense">+ Expense</button>
+            <button type="button" class="btn btn-danger" id="btn-delete-asset">Delete</button>
+          </div>
+        </div>
+        <div class="bento">
+          <div class="card span-6">
+            <p class="card-title">Investment &amp; justification</p>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>Total investment</span><strong id="asset-inv">$0</strong></div>
+              <div class="mini-stat"><span>Uses logged</span><strong id="asset-uses">0</strong></div>
+              <div class="mini-stat"><span>Cost / use</span><strong id="asset-cpu">—</strong></div>
+            </div>
+            <p class="stat-sub" id="asset-roi-line"></p>
+            <div class="progress-bar"><i id="asset-score-bar" style="width: 0%"></i></div>
+          </div>
+          <div class="card span-6">
+            <p class="card-title">Usage &amp; maintenance</p>
+            <div class="table-wrap" style="max-height: 200px">
+              <table class="data" id="table-usage">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Min</th>
+                    <th>Km</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card span-12">
+            <p class="card-title">Asset expenses</p>
+            <div class="table-wrap" style="max-height: 280px">
+              <table class="data" id="table-asset-tx">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Budgets -->
+      <section id="view-budgets" class="view" aria-label="Budgets">
+        <div class="page-head">
+          <div>
+            <h2>Budgets</h2>
+            <p>Monthly caps per category (optionally scoped to a project).</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-new-budget">+ Budget</button>
+        </div>
+        <div class="card">
+          <div class="table-wrap">
+            <table class="data" id="table-budgets">
+              <thead>
+                <tr>
+                  <th>Scope</th>
+                  <th>Category</th>
+                  <th>Monthly limit</th>
+                  <th>This month</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section id="view-settings" class="view" aria-label="Settings">
+        <div class="page-head">
+          <div>
+            <h2>Settings</h2>
+            <p>Currency, live FX, backups, and optional cloud sync.</p>
+          </div>
+        </div>
+        <div class="settings-layout">
+          <div class="card settings-hero">
+            <p class="card-title">Cloud sync</p>
+            <div class="cloud-sync-row top-actions" style="flex-wrap: wrap; align-items: center; gap: 0.5rem">
+              <button type="button" class="btn" id="btn-cloud-signin">Sign in</button>
+              <button type="button" class="btn btn-primary" id="btn-cloud-sync">Sync</button>
+              <button type="button" class="btn btn-ghost" id="btn-cloud-signout" hidden>Sign out</button>
+            </div>
+            <p id="cloud-account-email" class="field-hint" style="margin-top: 0.5rem; min-height: 1.2em" aria-live="polite"></p>
+          </div>
+
+          <div class="settings-grid">
+            <div class="card">
+              <p class="card-title">Currency &amp; FX</p>
+              <div class="field">
+                <label class="field-label" for="set-book">Book currency</label>
+                <select id="set-book" class="input"></select>
+              </div>
+              <p class="field-hint">Amounts are stored in book currency using “units of each currency per 1 USD”.</p>
+              <div class="field">
+                <label class="field-label">Rates (per 1 USD)</label>
+                <div id="fx-fields"></div>
+              </div>
+              <div class="top-actions" style="flex-wrap: wrap">
+                <button type="button" class="btn" id="btn-fx-live">Refresh from live rates</button>
+                <button type="button" class="btn btn-primary" id="btn-save-settings">Save currency settings</button>
+              </div>
+              <p class="field-hint">
+                Live refresh uses
+                <a href="https://www.exchangerate-api.com/" rel="noopener noreferrer" target="_blank">ExchangeRate-API</a>
+                (open.er-api.com), then ECB rates via Frankfurter, then a third fallback. Defaults are placeholders until you
+                refresh or edit. Saved data keeps previous numbers until you refresh.
+              </p>
+            </div>
+
+            <div class="card">
+              <p class="card-title">Backups</p>
+              <p class="stat-sub" style="margin-bottom: 1rem">Primary copy is local; use JSON for extra safety.</p>
+              <div class="top-actions" style="flex-direction: column; align-items: stretch">
+                <button type="button" class="btn btn-primary" id="btn-export-json">Download JSON backup</button>
+                <button type="button" class="btn" id="btn-import-replace">Import JSON (replace)</button>
+                <button type="button" class="btn" id="btn-import-merge">Import JSON (merge)</button>
+                <input type="file" id="file-import" class="sr-only" accept="application/json,.json" />
+              </div>
+            </div>
+
+            <div class="card">
+              <p class="card-title">Danger zone</p>
+              <button type="button" class="btn btn-danger" id="btn-reset-all">Erase all local data</button>
+              <p class="field-hint">Download a backup first. Irreversible.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal-overlay" id="modal-transaction" role="dialog" aria-modal="true" aria-labelledby="mt-title">
+      <div class="modal wide">
+        <h3 id="mt-title">Transaction</h3>
+        <form id="form-transaction">
+          <input type="hidden" id="tx-id" />
+          <div class="settings-grid">
+            <div class="field">
+              <label class="field-label" for="tx-type">Type</label>
+              <select id="tx-type" class="input" required>
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-date">Date</label>
+              <input type="date" id="tx-date" class="input" required />
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-amount">Amount</label>
+              <input type="number" id="tx-amount" class="input" step="0.01" min="0" required />
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-currency">Amount currency</label>
+              <select id="tx-currency" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-category">Category</label>
+              <input type="text" id="tx-category" class="input" list="list-cat-expense" required />
+              <datalist id="list-cat-expense"></datalist>
+              <datalist id="list-cat-income"></datalist>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-project">Project (optional)</label>
+              <select id="tx-project" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-item">Link to asset (optional)</label>
+              <select id="tx-item" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-vendor">Vendor / payee</label>
+              <input type="text" id="tx-vendor" class="input" placeholder="e.g. Cursor, AWS" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-payment">Payment method</label>
+              <select id="tx-payment" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-recurring">Recurring</label>
+              <select id="tx-recurring" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="tx-next-due">Next due (for recurring)</label>
+              <input type="date" id="tx-next-due" class="input" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Quick templates</label>
+            <div class="chip-row" id="tx-templates"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="tx-desc">Description</label>
+            <textarea id="tx-desc" class="input"></textarea>
+          </div>
+          <div class="field">
+            <label class="field-label" for="tx-tags">Tags (comma-separated)</label>
+            <input type="text" id="tx-tags" class="input" placeholder="saas, infra, tax-deductible" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-project" role="dialog" aria-modal="true">
+      <div class="modal wide">
+        <h3 id="mp-title">Project</h3>
+        <form id="form-project">
+          <input type="hidden" id="pj-id" />
+          <div class="field">
+            <label class="field-label" for="pj-name">Name</label>
+            <input type="text" id="pj-name" class="input" required />
+          </div>
+          <div class="field">
+            <label class="field-label" for="pj-desc">Description</label>
+            <textarea id="pj-desc" class="input"></textarea>
+          </div>
+          <div class="settings-grid">
+            <div class="field">
+              <label class="field-label" for="pj-lifecycle">Project phase</label>
+              <select id="pj-lifecycle" class="input"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="pj-target">Target monthly profit (book)</label>
+              <input type="number" id="pj-target" class="input" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="pj-est-cost">Estimated total cost (book)</label>
+              <input type="number" id="pj-est-cost" class="input" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="pj-est-end">Estimated completion date</label>
+              <input type="date" id="pj-est-end" class="input" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="pj-tags">Tags</label>
+            <input type="text" id="pj-tags" class="input" placeholder="webapp, client-a" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-asset" role="dialog" aria-modal="true">
+      <div class="modal wide">
+        <h3 id="ma-title">Asset</h3>
+        <form id="form-asset">
+          <input type="hidden" id="as-id" />
+          <div class="settings-grid">
+            <div class="field">
+              <label class="field-label" for="as-name">Name</label>
+              <input type="text" id="as-name" class="input" required />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-cat">Category</label>
+              <input type="text" id="as-cat" class="input" list="list-asset-cat" />
+              <datalist id="list-asset-cat"></datalist>
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-price">Purchase price (book)</label>
+              <input type="number" id="as-price" class="input" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-pdate">Purchase date</label>
+              <input type="date" id="as-pdate" class="input" required />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-life">Expected lifespan (years)</label>
+              <input type="number" id="as-life" class="input" min="1" value="5" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-status">Status</label>
+              <select id="as-status" class="input">
+                <option value="active">active</option>
+                <option value="sold">sold</option>
+                <option value="retired">retired</option>
+              </select>
+            </div>
+          </div>
+          <p class="card-title" style="margin-top: 1rem">Smart ROI inputs</p>
+          <div class="settings-grid">
+            <div class="field">
+              <label class="field-label" for="as-health">Health benefit / use (book)</label>
+              <input type="number" id="as-health" class="input" step="0.01" value="0" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-time">Time savings / use (minutes)</label>
+              <input type="number" id="as-time" class="input" step="0.1" value="0" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="as-enjoy">Enjoyment value / use (book)</label>
+              <input type="number" id="as-enjoy" class="input" step="0.01" value="0" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="as-notes">Notes</label>
+            <textarea id="as-notes" class="input"></textarea>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-usage" role="dialog" aria-modal="true">
+      <div class="modal">
+        <h3>Log usage</h3>
+        <form id="form-usage">
+          <input type="hidden" id="us-item" />
+          <input type="hidden" id="us-id" />
+          <div class="field">
+            <label class="field-label" for="us-date">Date</label>
+            <input type="date" id="us-date" class="input" required />
+          </div>
+          <div class="field">
+            <label class="field-label" for="us-dur">Duration (minutes)</label>
+            <input type="number" id="us-dur" class="input" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="us-km">Distance (km)</label>
+            <input type="number" id="us-km" class="input" step="0.01" min="0" value="0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="us-val">Value generated (book)</label>
+            <input type="number" id="us-val" class="input" step="0.01" value="0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="us-notes">Notes</label>
+            <input type="text" id="us-notes" class="input" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-budget" role="dialog" aria-modal="true">
+      <div class="modal">
+        <h3>Budget</h3>
+        <form id="form-budget">
+          <input type="hidden" id="bd-id" />
+          <div class="field">
+            <label class="field-label" for="bd-project">Project scope</label>
+            <select id="bd-project" class="input"></select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="bd-cat">Category (match transaction category)</label>
+            <input type="text" id="bd-cat" class="input" list="list-bd-cat" required />
+            <datalist id="list-bd-cat"></datalist>
+          </div>
+          <div class="field">
+            <label class="field-label" for="bd-limit">Monthly limit (book)</label>
+            <input type="number" id="bd-limit" class="input" step="0.01" min="0" required />
+          </div>
+          <div class="field">
+            <label class="field-label" for="bd-notes">Notes</label>
+            <input type="text" id="bd-notes" class="input" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-cloud-auth" role="dialog" aria-modal="true" aria-labelledby="cloud-auth-title">
+      <div class="modal">
+        <h3 id="cloud-auth-title">Sign in</h3>
+        <p id="cloud-setup-hint" class="field-hint cloud-setup-hint" hidden>
+          <strong>Setup and this app must use the same address</strong> (e.g. both
+          <code class="settings-code">http://127.0.0.1:5500/...</code> — not Setup on Live Server and the app opened as a
+          <code class="settings-code">file:///</code> link). Open
+          <a href="sync.html">Setup</a>, save <strong>Project URL</strong> + <strong>anon key</strong>, then come back here and press
+          <strong>F5</strong>. For deploys: set env vars and run <code class="settings-code">npm run build</code> (<code class="settings-code">.env.example</code>).
+        </p>
+        <div id="cloud-setup-actions" class="cloud-setup-actions" hidden>
+          <a href="sync.html" class="btn btn-primary cloud-setup-open">Open connection setup</a>
+        </div>
+        <form id="form-cloud-auth">
+          <div class="field">
+            <label class="field-label" for="cloud-email">Email</label>
+            <input type="email" id="cloud-email" class="input" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label class="field-label" for="cloud-password">Password</label>
+            <input type="password" id="cloud-password" class="input" autocomplete="current-password" required />
+          </div>
+          <div class="modal-actions" style="flex-wrap: wrap; gap: 0.5rem">
+            <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button type="button" class="btn" id="btn-cloud-register">Create account</button>
+            <button type="submit" class="btn btn-primary">Sign in</button>
+          </div>
+        </form>
+        <div class="field" style="margin-top: 1rem">
+          <button type="button" class="btn" id="btn-cloud-google" style="width: 100%">Continue with Google</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-host" id="toasts" aria-live="polite"></div>
+
+    <script src="js/env.generated.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="js/presets.js"></script>
+    <script src="js/storage.js"></script>
+    <script src="js/theme.js"></script>
+    <script src="js/sync.js"></script>
+    <script src="js/fx-live.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
