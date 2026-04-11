@@ -1053,13 +1053,22 @@
     const minAmtFromLayout = Math.min(132, Math.floor(w * L.minAmtRatio));
     const barMin = L.barMin;
     let amtCol = Math.max(minAmtFromLayout, Math.ceil(maxMoneyW) + rightMoneyPad + gapBarToAmount);
-    while (w - nameCol - 20 - barMin < amtCol && nameCol > 40) {
-      nameCol -= 6;
-    }
 
-    const xBar0 = nameCol + 10;
-    const xBar1 = w - amtCol - 10;
-    const barW = Math.max(0, xBar1 - xBar0);
+    let xBar0;
+    let xBar1;
+    let barW;
+    if (L.stack) {
+      xBar0 = 6;
+      xBar1 = w - amtCol - 10;
+      barW = Math.max(0, xBar1 - xBar0);
+    } else {
+      while (w - nameCol - 20 - barMin < amtCol && nameCol > 40) {
+        nameCol -= 6;
+      }
+      xBar0 = nameCol + 10;
+      xBar1 = w - amtCol - 10;
+      barW = Math.max(0, xBar1 - xBar0);
+    }
 
     ctx.textBaseline = "middle";
 
@@ -1085,7 +1094,7 @@
       ctx.textAlign = "left";
       ctx.fillStyle = text;
       let name = p.name;
-      const nameTruncW = L.stack ? Math.max(nameCol - 6, xBar0 - 14) : nameCol - 6;
+      const nameTruncW = L.stack ? w - 12 : nameCol - 6;
       while (name.length > 1 && ctx.measureText(name + "…").width > nameTruncW) name = name.slice(0, -1);
       if (name !== p.name) name += "…";
       ctx.fillText(name, 6, yName);
