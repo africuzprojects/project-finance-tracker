@@ -1120,15 +1120,27 @@ label.field-label.flex-row-label {
   line-height: 1.3;
 }
 
-/* Chart */
+/* Chart — matches canvas fill; min-width 0 so bento columns don’t overflow */
 .chart-canvas-wrap {
   min-height: 140px;
+  min-width: 0;
+  width: 100%;
   position: relative;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--chart-canvas);
 }
 
 canvas.chart {
+  display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+@media print {
+  .chart-canvas-wrap {
+    break-inside: avoid;
+  }
 }
 
 /* Tables & lists */

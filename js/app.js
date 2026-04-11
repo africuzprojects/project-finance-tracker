@@ -7,6 +7,8 @@
 
   let cloudSyncTimer = null;
   let authUnsubscribe = null;
+  let chartResizeObs = null;
+  let chartResizeRaf = null;
 
   const PROJECT_SORT_STORAGE = "pft_project_sort";
 
@@ -589,6 +591,152 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  function scheduleProjectChartRedraw() {
+    if (chartResizeRaf != null) return;
+    chartResizeRaf = requestAnimationFrame(() => {
+      chartResizeRaf = null;
+      if ($("#view-dashboard")?.classList.contains("active")) drawProjectChart();
+    });
+  }
+
+  function ensureChartResizeObserver() {
+    const wrap = $("#chart-projects")?.parentElement;
+    if (!wrap || chartResizeObs) return;
+    chartResizeObs = new ResizeObserver(() => scheduleProjectChartRedraw());
+    chartResizeObs.observe(wrap);
+  }
+
+  /**
+   * Geometry for the project P/L canvas from actual card width (bento spans, breakpoints, rotation).
+   */
+  function projectChartLayout(w) {
+    const x = Math.max(0, w);
+    if (x <= 360) {
+      return {
+        stack: true,
+        rowH: 52,
+        padT: 16,
+        padB: 16,
+        nameSize: 14,
+        moneySize: 13,
+        nameY: 14,
+        barTopOff: 30,
+        barHt: 18,
+        minAmtRatio: 0.26,
+        nameColMax: 162,
+        nameColMin: 54,
+        nameColFrac: 0.34,
+        emptyFs: 14,
+        emptyPad: 16,
+        barMin: 22,
+        gapBarToAmount: 8,
+      };
+    }
+    if (x <= 480) {
+      return {
+        stack: true,
+        rowH: 49,
+        padT: 15,
+        padB: 15,
+        nameSize: 13,
+        moneySize: 13,
+        nameY: 12,
+        barTopOff: 27,
+        barHt: 18,
+        minAmtRatio: 0.24,
+        nameColMax: 158,
+        nameColMin: 56,
+        nameColFrac: 0.32,
+        emptyFs: 14,
+        emptyPad: 15,
+        barMin: 23,
+        gapBarToAmount: 9,
+      };
+    }
+    if (x <= 640) {
+      return {
+        stack: true,
+        rowH: 46,
+        padT: 14,
+        padB: 14,
+        nameSize: 13,
+        moneySize: 13,
+        nameY: 11,
+        barTopOff: 24,
+        barHt: 18,
+        minAmtRatio: 0.23,
+        nameColMax: 155,
+        nameColMin: 58,
+        nameColFrac: 0.3,
+        emptyFs: 14,
+        emptyPad: 14,
+        barMin: 24,
+        gapBarToAmount: 10,
+      };
+    }
+    if (x <= 900) {
+      return {
+        stack: true,
+        rowH: 44,
+        padT: 14,
+        padB: 14,
+        nameSize: 13,
+        moneySize: 13,
+        nameY: 10,
+        barTopOff: 23,
+        barHt: 18,
+        minAmtRatio: 0.22,
+        nameColMax: 152,
+        nameColMin: 62,
+        nameColFrac: 0.29,
+        emptyFs: 13,
+        emptyPad: 14,
+        barMin: 24,
+        gapBarToAmount: 10,
+      };
+    }
+    if (x <= 1200) {
+      return {
+        stack: true,
+        rowH: 42,
+        padT: 13,
+        padB: 13,
+        nameSize: 13,
+        moneySize: 13,
+        nameY: 10,
+        barTopOff: 22,
+        barHt: 17,
+        minAmtRatio: 0.2,
+        nameColMax: 150,
+        nameColMin: 66,
+        nameColFrac: 0.28,
+        emptyFs: 13,
+        emptyPad: 14,
+        barMin: 24,
+        gapBarToAmount: 10,
+      };
+    }
+    return {
+      stack: false,
+      rowH: 36,
+      padT: 12,
+      padB: 12,
+      nameSize: 13,
+      moneySize: 13,
+      nameY: 0,
+      barTopOff: 0,
+      barHt: 20,
+      minAmtRatio: 0.18,
+      nameColMax: 172,
+      nameColMin: 72,
+      nameColFrac: 0.26,
+      emptyFs: 14,
+      emptyPad: 16,
+      barMin: 24,
+      gapBarToAmount: 10,
+    };
+  }
+
   function navigate(view) {
     closeDrawer();
     $$(".view").forEach((v) => v.classList.remove("active"));
@@ -849,14 +997,15 @@
     const wrap = $("#chart-projects")?.parentElement;
     const canvas = $("#chart-projects");
     if (!canvas || !wrap) return;
+    ensureChartResizeObserver();
     const ctx = canvas.getContext("2d");
-    const w = wrap.clientWidth || 600;
+    const w = Math.max(0, wrap.clientWidth || 600);
+    const L = projectChartLayout(w);
     const projects = state.projects.slice(0, 12);
-    const rowH = 38;
-    const padT = 14;
-    const padB = 14;
-    const amtCol = Math.min(118, Math.floor(w * 0.22));
-    const nameCol = Math.min(150, Math.max(72, Math.floor(w * 0.28)));
+    const rowH = L.rowH;
+    const padT = L.padT;
+    const padB = L.padB;
+    let nameCol = Math.min(L.nameColMax, Math.max(L.nameColMin, Math.floor(w * L.nameColFrac)));
     const h = Math.max(140, padT + padB + projects.length * rowH);
 
     wrap.style.height = h + "px";
@@ -878,47 +1027,82 @@
 
     if (!projects.length) {
       ctx.fillStyle = muted;
-      ctx.font = "14px system-ui, sans-serif";
+      ctx.font = `${L.emptyFs}px system-ui, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "left";
-      ctx.fillText("Add a project to see performance", 16, h / 2);
+      const msg = "Add a project to see performance";
+      const ep = L.emptyPad;
+      if (w < 320 && ctx.measureText(msg).width > w - ep * 2) {
+        ctx.font = `${Math.max(12, L.emptyFs - 1)}px system-ui, sans-serif`;
+      }
+      ctx.fillText(msg, ep, h / 2);
       return;
     }
 
     const profits = projects.map((p) => projectSummary(p.id).net);
     const maxAbs = Math.max(1, ...profits.map((x) => Math.abs(x)));
+
+    ctx.font = `600 ${L.moneySize}px ui-monospace, monospace`;
+    let maxMoneyW = 0;
+    for (const net of profits) {
+      const tw = ctx.measureText(formatMoney(net)).width;
+      if (tw > maxMoneyW) maxMoneyW = tw;
+    }
+    const rightMoneyPad = 6;
+    const gapBarToAmount = L.gapBarToAmount;
+    const minAmtFromLayout = Math.min(132, Math.floor(w * L.minAmtRatio));
+    const barMin = L.barMin;
+    let amtCol = Math.max(minAmtFromLayout, Math.ceil(maxMoneyW) + rightMoneyPad + gapBarToAmount);
+    while (w - nameCol - 20 - barMin < amtCol && nameCol > 40) {
+      nameCol -= 6;
+    }
+
     const xBar0 = nameCol + 10;
     const xBar1 = w - amtCol - 10;
-    const barW = Math.max(24, xBar1 - xBar0);
+    const barW = Math.max(0, xBar1 - xBar0);
 
     ctx.textBaseline = "middle";
 
     projects.forEach((p, i) => {
       const net = profits[i];
-      const cy = padT + i * rowH + rowH / 2;
+      const rowBase = padT + i * rowH;
       const netStr = formatMoney(net);
-      const barTop = cy - 11;
-      const barHt = 22;
+      let yName;
+      let barTop;
+      let barHt = L.barHt;
+      let yMoney;
+      if (L.stack) {
+        yName = rowBase + L.nameY;
+        barTop = rowBase + L.barTopOff;
+        yMoney = barTop + barHt / 2;
+      } else {
+        yMoney = rowBase + rowH / 2;
+        yName = yMoney;
+        barTop = yMoney - barHt / 2;
+      }
 
-      ctx.font = "13px system-ui, sans-serif";
+      ctx.font = `${L.nameSize}px system-ui, sans-serif`;
       ctx.textAlign = "left";
       ctx.fillStyle = text;
       let name = p.name;
-      while (name.length > 1 && ctx.measureText(name + "…").width > nameCol - 6) name = name.slice(0, -1);
+      const nameTruncW = L.stack ? Math.max(nameCol - 6, xBar0 - 14) : nameCol - 6;
+      while (name.length > 1 && ctx.measureText(name + "…").width > nameTruncW) name = name.slice(0, -1);
       if (name !== p.name) name += "…";
-      ctx.fillText(name, 6, cy);
+      ctx.fillText(name, 6, yName);
 
       ctx.fillStyle = track;
       ctx.fillRect(xBar0, barTop, barW, barHt);
       const fillFrac = Math.abs(net) / maxAbs;
-      const fillW = Math.max(net !== 0 ? 3 : 0, fillFrac * barW);
+      let fillW = barW <= 0 ? 0 : fillFrac * barW;
+      if (net !== 0 && fillW > 0) fillW = Math.max(fillW, Math.min(3, barW));
+      fillW = Math.min(barW, fillW);
       ctx.fillStyle = net >= 0 ? ok : bad;
       ctx.fillRect(xBar0, barTop, fillW, barHt);
 
       ctx.textAlign = "right";
-      ctx.font = "600 13px ui-monospace, monospace";
+      ctx.font = `600 ${L.moneySize}px ui-monospace, monospace`;
       ctx.fillStyle = net >= 0 ? ok : bad;
-      ctx.fillText(netStr, w - 6, cy);
+      ctx.fillText(netStr, w - 6, yMoney);
     });
   }
 
@@ -2196,7 +2380,7 @@
 
     window.addEventListener("resize", () => {
       if (!isMobileNav()) closeDrawer();
-      if ($("#view-dashboard").classList.contains("active")) drawProjectChart();
+      scheduleProjectChartRedraw();
     });
   }
 
