@@ -11,3 +11,4 @@ www/
 
 # Capacitor native projects (optional: remove android/ from ignore if you want to commit them)
 # android/
+.vercel
