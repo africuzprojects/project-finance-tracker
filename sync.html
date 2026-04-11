@@ -98,11 +98,33 @@
             <span>Auto-sync after changes (2s debounce, main app)</span>
           </label>
         </div>
+        <p class="field-hint" style="margin-bottom: 0.75rem">
+          On a new device, use <strong>Retrieve from cloud</strong> before <strong>Save to cloud</strong> so you don’t overwrite your backup with empty data.
+        </p>
         <div class="top-actions" style="flex-wrap: wrap">
-          <button type="button" class="btn btn-primary" id="btn-sync-push">Push to cloud</button>
-          <button type="button" class="btn" id="btn-sync-pull">Pull from cloud</button>
+          <button type="button" class="btn" id="btn-sync-pull">Retrieve from cloud</button>
+          <button type="button" class="btn btn-primary" id="btn-sync-push">Save to cloud</button>
         </div>
         <p class="field-hint" id="sync-status" style="margin-top: 1rem">Loading…</p>
+      </div>
+    </div>
+
+    <div
+      class="modal-overlay"
+      id="modal-cloud-conflict"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cloud-conflict-title"
+      aria-describedby="cloud-conflict-message"
+    >
+      <div class="modal warning-modal" id="cloud-conflict-box">
+        <h3 id="cloud-conflict-title">Cloud data on this device</h3>
+        <p id="cloud-conflict-message" class="warning-message"></p>
+        <div class="modal-actions warning-actions" style="flex-direction: column; align-items: stretch; gap: 0.5rem">
+          <button type="button" class="btn btn-primary" id="btn-cloud-conflict-merge">Merge both</button>
+          <button type="button" class="btn" id="btn-cloud-conflict-replace">Use cloud only (replace this device)</button>
+          <button type="button" class="btn btn-ghost" id="btn-cloud-conflict-keep">Keep this device only</button>
+        </div>
       </div>
     </div>
 
@@ -113,6 +135,7 @@
     <script src="js/storage.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/sync.js"></script>
+    <script src="js/pft-cloud-conflict.js"></script>
     <script src="js/sync-page.js"></script>
   </body>
 </html>

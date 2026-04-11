@@ -183,7 +183,7 @@
     return now;
   }
 
-  async function pullState() {
+  async function fetchRemotePayload() {
     const sb = getClient();
     if (!sb) throw new Error("Missing Supabase client");
     const { data: u } = await sb.auth.getUser();
@@ -197,10 +197,79 @@
       .maybeSingle();
 
     if (error) throw error;
-    if (!data || !data.payload) return { applied: false, reason: "empty" };
-    localStorage.setItem(LAST_PULL, data.updated_at || "");
-    mergeRemoteIntoLocal(data.payload);
-    return { applied: true, updated_at: data.updated_at };
+    if (!data || data.payload == null || data.payload === undefined) {
+      return { empty: true };
+    }
+    const St = global.PFTStorage;
+    const migrated = St.migrate(JSON.parse(JSON.stringify(data.payload)));
+    if (!St.isSubstantiveState(migrated)) {
+      return { empty: true };
+    }
+    return { empty: false, payload: data.payload, updated_at: data.updated_at };
+  }
+
+  function applyRemotePayload(payload, updated_at) {
+    if (updated_at) localStorage.setItem(LAST_PULL, updated_at);
+    mergeRemoteIntoLocal(payload);
+  }
+
+  /**
+   * Interactive retrieve: empty device replaces; both substantive calls chooseConflict({ updatedAt, payload, localSnapshot }).
+   * chooseConflict must return Promise<'keep'|'replace'|'merge'>.
+   * options.localSnapshot: optional in-memory state (main app); defaults to St.load().
+   */
+  async function executeRetrieve(chooseConflict, options) {
+    if (typeof chooseConflict !== "function") {
+      throw new Error("executeRetrieve requires chooseConflict callback");
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const St = global.PFTStorage;
+    const peek = await fetchRemotePayload();
+    const local =
+      opts.localSnapshot != null
+        ? St.migrate(JSON.parse(JSON.stringify(opts.localSnapshot)))
+        : St.load();
+
+    if (peek.empty) {
+      if (St.isSubstantiveState(local)) {
+        return { outcome: "no_cloud_data" };
+      }
+      return { outcome: "no_backup" };
+    }
+
+    if (!St.isSubstantiveState(local)) {
+      applyRemotePayload(peek.payload, peek.updated_at);
+      return { outcome: "replaced" };
+    }
+
+    const choice = await chooseConflict({
+      updatedAt: peek.updated_at || "",
+      payload: peek.payload,
+      localSnapshot: local,
+    });
+
+    if (choice === "keep" || !choice) {
+      return { outcome: "cancelled" };
+    }
+    if (choice === "replace") {
+      applyRemotePayload(peek.payload, peek.updated_at);
+      return { outcome: "replaced" };
+    }
+    if (choice === "merge") {
+      const remoteMigrated = St.migrate(JSON.parse(JSON.stringify(peek.payload)));
+      const merged = St.mergeCloudStates(local, remoteMigrated);
+      St.save(merged);
+      if (peek.updated_at) localStorage.setItem(LAST_PULL, peek.updated_at);
+      return { outcome: "merged", state: merged };
+    }
+    return { outcome: "cancelled" };
+  }
+
+  async function pullState() {
+    const peek = await fetchRemotePayload();
+    if (peek.empty) return { applied: false, reason: "empty" };
+    applyRemotePayload(peek.payload, peek.updated_at);
+    return { applied: true, updated_at: peek.updated_at };
   }
 
   async function restoreSession() {
@@ -233,6 +302,9 @@
     signInWithGoogle,
     pushState,
     pullState,
+    fetchRemotePayload,
+    applyRemotePayload,
+    executeRetrieve,
     restoreSession,
     onAuthChange,
     LAST_PULL_KEY: LAST_PULL,

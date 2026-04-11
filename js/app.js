@@ -1401,6 +1401,7 @@
     const signin = $("#btn-cloud-signin");
     const signout = $("#btn-cloud-signout");
     const syncBtn = $("#btn-cloud-sync");
+    const retrieveBtn = $("#btn-cloud-retrieve");
     const emailEl = $("#cloud-account-email");
     if (!signin || !syncBtn) return;
     const Sync = window.PFTSync;
@@ -1421,6 +1422,7 @@
     if (emailEl) emailEl.textContent = signedIn && session.user.email ? session.user.email : "";
     signin.disabled = false;
     syncBtn.disabled = !configured;
+    if (retrieveBtn) retrieveBtn.disabled = !configured;
     if (signout) signout.disabled = !signedIn;
     updateCloudSetupUi();
   }
@@ -1428,7 +1430,7 @@
   async function cloudPushNow() {
     const Sync = window.PFTSync;
     if (!Sync || !Sync.getClient()) {
-      const emb = Sync.hasEmbeddedSupabaseConfig && Sync.hasEmbeddedSupabaseConfig();
+      const emb = Sync && Sync.hasEmbeddedSupabaseConfig && Sync.hasEmbeddedSupabaseConfig();
       toast(
         emb
           ? "Cloud sync couldn’t start. Refresh the page or check the deployment build."
@@ -1454,13 +1456,80 @@
     }
   }
 
+  async function cloudPullNow() {
+    const Sync = window.PFTSync;
+    if (!Sync || !Sync.getClient()) {
+      const emb = Sync && Sync.hasEmbeddedSupabaseConfig && Sync.hasEmbeddedSupabaseConfig();
+      toast(
+        emb
+          ? "Cloud sync couldn’t start. Refresh the page or check the deployment build."
+          : "Cloud isn’t configured: use Setup in Sign in, or set SUPABASE_URL / SUPABASE_ANON_KEY and run npm run build."
+      );
+      return false;
+    }
+    try {
+      const { data: u } = await Sync.getClient().auth.getUser();
+      if (!u || !u.user) {
+        toast("Sign in first, then retrieve your backup.");
+        return false;
+      }
+      if (typeof Sync.executeRetrieve !== "function") {
+        toast("Sync module is outdated. Reload the app.");
+        return false;
+      }
+      const result = await Sync.executeRetrieve(
+        (ctx) => {
+          const C = window.PFTCloudConflict;
+          if (C && typeof C.prompt === "function") return C.prompt(ctx.updatedAt);
+          return Promise.resolve(
+            window.confirm(
+              "This device and the cloud both have data. OK = use cloud only (replace this device). Cancel = keep this device (no merge in this fallback)."
+            )
+              ? "replace"
+              : "keep"
+          );
+        },
+        { localSnapshot: state }
+      );
+      state = St.load();
+      initPresetsUi();
+      updateFxAuditUi();
+      refreshAllViews();
+      switch (result.outcome) {
+        case "replaced":
+          toast("Retrieved data from cloud");
+          break;
+        case "merged":
+          toast("Merged local and cloud data");
+          break;
+        case "no_backup":
+          toast("No cloud backup found yet. On a device that has your data, use Save to cloud first.");
+          break;
+        case "no_cloud_data":
+          toast("Cloud backup is empty. This device still has your local data.");
+          break;
+        case "cancelled":
+          toast("Kept this device’s data");
+          break;
+        default:
+          break;
+      }
+      return true;
+    } catch (e) {
+      toast(e.message || "Retrieve failed");
+      return false;
+    }
+  }
+
   function ensureAuthListener() {
     const Sync = window.PFTSync;
     if (!Sync || authUnsubscribe) return;
     if (!Sync.getClient()) return;
     const { data } = Sync.onAuthChange((event, session) => {
       void renderCloudControls();
-      if (event === "SIGNED_IN" && session && session.user) toast("Signed in");
+      if (event === "SIGNED_IN" && session && session.user) {
+        toast("Signed in — use Retrieve from cloud on a new device, or Save to cloud to upload.");
+      }
       if (event === "SIGNED_OUT") {
         toast("Signed out");
         clearTimeout(cloudSyncTimer);
@@ -1995,6 +2064,7 @@
     });
 
     $("#btn-cloud-sync")?.addEventListener("click", () => void cloudPushNow());
+    $("#btn-cloud-retrieve")?.addEventListener("click", () => void cloudPullNow());
 
     $("#btn-cloud-signout")?.addEventListener("click", async () => {
       const Sync = window.PFTSync;
@@ -2021,7 +2091,6 @@
         $("#cloud-password").value = "";
         closeModals();
         await renderCloudControls();
-        await cloudPushNow();
       } catch (err) {
         toast(err.message || "Sign in failed");
       }
@@ -2044,8 +2113,6 @@
           $("#cloud-password").value = "";
           closeModals();
           await renderCloudControls();
-          await cloudPushNow();
-          toast("Account ready — backed up to cloud");
         } else {
           toast("Check your email to confirm your account, then sign in.");
         }
@@ -2230,7 +2297,6 @@
             try {
               if (sessionStorage.getItem("pft_oauth_pending")) {
                 sessionStorage.removeItem("pft_oauth_pending");
-                await cloudPushNow();
               }
             } catch (_e) {
               try {

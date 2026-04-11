@@ -134,7 +134,7 @@
         await Sync.pushState(state);
         if (state._meta) state._meta.lastRemoteUpdated = new Date().toISOString();
         St.save(state);
-        toast("Pushed");
+        toast("Saved to cloud");
         renderStatus();
       } catch (e) {
         toast(e.message || "Push failed");
@@ -143,11 +143,41 @@
 
     $("#btn-sync-pull")?.addEventListener("click", async () => {
       try {
-        await Sync.pullState();
-        toast("Pulled — reload main app to refresh UI");
+        if (typeof Sync.executeRetrieve !== "function") {
+          toast("Reload the page — sync script is outdated.");
+          return;
+        }
+        const result = await Sync.executeRetrieve((ctx) => {
+          const C = window.PFTCloudConflict;
+          if (C && typeof C.prompt === "function") return C.prompt(ctx.updatedAt);
+          return Promise.resolve(
+            window.confirm(
+              "This device and the cloud both have data. OK = use cloud only. Cancel = keep this device."
+            )
+              ? "replace"
+              : "keep"
+          );
+        });
+        switch (result.outcome) {
+          case "replaced":
+          case "merged":
+            toast("Done — reload the main app if it’s already open");
+            break;
+          case "no_backup":
+            toast("No cloud backup found yet. Save to cloud from a device that has your data.");
+            break;
+          case "no_cloud_data":
+            toast("Cloud backup is empty. Local data unchanged.");
+            break;
+          case "cancelled":
+            toast("Kept this device’s data");
+            break;
+          default:
+            break;
+        }
         renderStatus();
       } catch (e) {
-        toast(e.message || "Pull failed");
+        toast(e.message || "Retrieve failed");
       }
     });
 

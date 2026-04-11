@@ -479,9 +479,13 @@
         <div class="settings-layout">
           <div class="card settings-hero">
             <p class="card-title">Cloud sync</p>
+            <p class="field-hint" style="margin-bottom: 0.75rem">
+              On a <strong>new device</strong>, sign in then tap <strong>Retrieve from cloud</strong> first so you do not overwrite your backup with empty data.
+            </p>
             <div class="cloud-sync-row top-actions" style="flex-wrap: wrap; align-items: center; gap: 0.5rem">
               <button type="button" class="btn" id="btn-cloud-signin">Sign in</button>
-              <button type="button" class="btn btn-primary" id="btn-cloud-sync">Sync</button>
+              <button type="button" class="btn" id="btn-cloud-retrieve">Retrieve from cloud</button>
+              <button type="button" class="btn btn-primary" id="btn-cloud-sync">Save to cloud</button>
               <button type="button" class="btn btn-ghost" id="btn-cloud-signout" hidden>Sign out</button>
             </div>
             <p id="cloud-account-email" class="field-hint" style="margin-top: 0.5rem; min-height: 1.2em" aria-live="polite"></p>
@@ -832,6 +836,25 @@
       </div>
     </div>
 
+    <div
+      class="modal-overlay"
+      id="modal-cloud-conflict"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cloud-conflict-title"
+      aria-describedby="cloud-conflict-message"
+    >
+      <div class="modal warning-modal" id="cloud-conflict-box">
+        <h3 id="cloud-conflict-title">Cloud data on this device</h3>
+        <p id="cloud-conflict-message" class="warning-message"></p>
+        <div class="modal-actions warning-actions" style="flex-direction: column; align-items: stretch; gap: 0.5rem">
+          <button type="button" class="btn btn-primary" id="btn-cloud-conflict-merge">Merge both</button>
+          <button type="button" class="btn" id="btn-cloud-conflict-replace">Use cloud only (replace this device)</button>
+          <button type="button" class="btn btn-ghost" id="btn-cloud-conflict-keep">Keep this device only</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast-host" id="toasts" aria-live="polite"></div>
 
     <script src="js/env.generated.js"></script>
@@ -840,6 +863,7 @@
     <script src="js/storage.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/sync.js"></script>
+    <script src="js/pft-cloud-conflict.js"></script>
     <script src="js/fx-live.js"></script>
     <script src="js/app.js"></script>
   </body>

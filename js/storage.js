@@ -103,6 +103,95 @@
     return JSON.stringify(state, null, 2);
   }
 
+  function compareRowRecency(a, b) {
+    const t = (row) => String(row.updatedAt || row.createdAt || row.date || row.usageDate || "").trim();
+    const ta = t(a);
+    const tb = t(b);
+    if (ta !== tb) return ta < tb ? -1 : ta > tb ? 1 : 0;
+    return 0;
+  }
+
+  function pickNewerRow(localRow, remoteRow) {
+    const c = compareRowRecency(localRow, remoteRow);
+    if (c > 0) return localRow;
+    if (c < 0) return remoteRow;
+    return localRow;
+  }
+
+  function mergeIdArrays(localArr, remoteArr) {
+    const map = new Map();
+    for (const row of localArr || []) {
+      if (row && row.id) map.set(row.id, row);
+    }
+    for (const row of remoteArr || []) {
+      if (!row || !row.id) continue;
+      const ex = map.get(row.id);
+      if (!ex) map.set(row.id, row);
+      else map.set(row.id, pickNewerRow(ex, row));
+    }
+    return Array.from(map.values());
+  }
+
+  function mergeSettings(localSettings, remoteSettings) {
+    const lr = { ...(localSettings && localSettings.ratesFromUSD) };
+    const rr = { ...(remoteSettings && remoteSettings.ratesFromUSD) };
+    const rates = { ...rr, ...lr };
+    rates.USD = 1;
+    const defS = defaultState().settings;
+    const lp = localSettings && localSettings.defaultProjectId;
+    const rp = remoteSettings && remoteSettings.defaultProjectId;
+    return {
+      bookCurrency: (localSettings && localSettings.bookCurrency) || (remoteSettings && remoteSettings.bookCurrency) || defS.bookCurrency,
+      fiscalYearStartMonth:
+        localSettings && localSettings.fiscalYearStartMonth != null
+          ? localSettings.fiscalYearStartMonth
+          : remoteSettings && remoteSettings.fiscalYearStartMonth != null
+            ? remoteSettings.fiscalYearStartMonth
+            : defS.fiscalYearStartMonth,
+      defaultProjectId: lp != null && lp !== "" ? lp : rp != null && rp !== "" ? rp : null,
+      ratesFromUSD: rates,
+    };
+  }
+
+  function isSubstantiveState(state) {
+    if (!state || typeof state !== "object") return false;
+    const hasRows =
+      (Array.isArray(state.projects) && state.projects.length > 0) ||
+      (Array.isArray(state.personalItems) && state.personalItems.length > 0) ||
+      (Array.isArray(state.transactions) && state.transactions.length > 0) ||
+      (Array.isArray(state.usageLogs) && state.usageLogs.length > 0) ||
+      (Array.isArray(state.budgets) && state.budgets.length > 0);
+    if (hasRows) return true;
+    const def = defaultState();
+    const s = state.settings || {};
+    if (s.bookCurrency && s.bookCurrency !== def.settings.bookCurrency) return true;
+    if (s.defaultProjectId != null && s.defaultProjectId !== "") return true;
+    if (s.fiscalYearStartMonth != null && Number(s.fiscalYearStartMonth) !== def.settings.fiscalYearStartMonth) return true;
+    return false;
+  }
+
+  function mergeCloudStates(localState, remoteState) {
+    const L = migrate(JSON.parse(JSON.stringify(localState)));
+    const R = migrate(JSON.parse(JSON.stringify(remoteState)));
+    const baseMeta = defaultState()._meta;
+    const out = {
+      version: 2,
+      settings: mergeSettings(L.settings, R.settings),
+      projects: mergeIdArrays(L.projects, R.projects).map(normalizeProjectRow),
+      personalItems: mergeIdArrays(L.personalItems, R.personalItems),
+      transactions: mergeIdArrays(L.transactions, R.transactions),
+      usageLogs: mergeIdArrays(L.usageLogs, R.usageLogs),
+      budgets: mergeIdArrays(L.budgets, R.budgets).map(normalizeBudgetRow),
+      _meta: {
+        ...baseMeta,
+        ...(R._meta || {}),
+        ...(L._meta || {}),
+        lastModified: new Date().toISOString(),
+      },
+    };
+    return migrate(out);
+  }
+
   function importJson(text, merge) {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== "object") throw new Error("Invalid file");
@@ -160,5 +249,7 @@
     exportJson,
     importJson,
     migrate,
+    isSubstantiveState,
+    mergeCloudStates,
   };
 })(typeof window !== "undefined" ? window : globalThis);
