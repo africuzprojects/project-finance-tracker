@@ -45,6 +45,8 @@
     }
 
     if (autoEl) autoEl.checked = Sync.isAutoSync();
+    const openEl = $("#sync-auto-open");
+    if (openEl) openEl.checked = Sync.isAutoOpen && Sync.isAutoOpen();
 
     const client = Sync.getClient();
     if (!client) {
@@ -184,6 +186,11 @@
     $("#sync-auto")?.addEventListener("change", (e) => {
       Sync.setAutoSync(e.target.checked);
       toast(e.target.checked ? "Auto-sync on" : "Auto-sync off");
+    });
+
+    $("#sync-auto-open")?.addEventListener("change", (e) => {
+      if (Sync.setAutoOpen) Sync.setAutoOpen(e.target.checked);
+      toast(e.target.checked ? "Auto-restore on open — on" : "Auto-restore on open — off");
     });
 
     const client = Sync.getClient();

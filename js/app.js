@@ -6,6 +6,7 @@
   if (!state._meta || typeof state._meta !== "object") state._meta = {};
 
   let cloudSyncTimer = null;
+  let cloudHideFlushRunning = false;
   let authUnsubscribe = null;
   let chartResizeObs = null;
   let chartResizeRaf = null;
@@ -165,23 +166,45 @@
     setTimeout(() => el.remove(), 4200);
   }
 
+  async function runAutoSyncPush() {
+    const Sync = window.PFTSync;
+    if (!Sync || !Sync.isAutoSync()) return;
+    const client = Sync.getClient();
+    if (!client) return;
+    const { data } = await client.auth.getUser();
+    if (!data || !data.user) return;
+    await Sync.pushState(state);
+    if (!state._meta) state._meta = {};
+    state._meta.lastRemoteUpdated = new Date().toISOString();
+    St.save(state);
+  }
+
   function scheduleCloudSync() {
     const Sync = window.PFTSync;
     if (!Sync || !Sync.isAutoSync()) return;
     clearTimeout(cloudSyncTimer);
-    cloudSyncTimer = setTimeout(async () => {
-      try {
-        const client = Sync.getClient();
-        if (!client) return;
-        const { data } = await client.auth.getUser();
-        if (!data.user) return;
-        await Sync.pushState(state);
-        if (state._meta) state._meta.lastRemoteUpdated = new Date().toISOString();
-        St.save(state);
-      } catch (_err) {
+    cloudSyncTimer = setTimeout(() => {
+      void runAutoSyncPush().catch(() => {
         /* silent — user can push manually */
-      }
+      });
     }, 2000);
+  }
+
+  function flushCloudSyncOnDocumentHide() {
+    const Sync = window.PFTSync;
+    if (!Sync || !Sync.isAutoSync()) return;
+    clearTimeout(cloudSyncTimer);
+    if (cloudHideFlushRunning) return;
+    cloudHideFlushRunning = true;
+    void (async () => {
+      try {
+        await runAutoSyncPush();
+      } catch (_err) {
+        /* silent */
+      } finally {
+        cloudHideFlushRunning = false;
+      }
+    })();
   }
 
   function save() {
@@ -1590,6 +1613,70 @@
     return null;
   }
 
+  function chooseCloudConflict(ctx) {
+    const C = window.PFTCloudConflict;
+    if (C && typeof C.prompt === "function") return C.prompt(ctx.updatedAt);
+    return Promise.resolve(
+      window.confirm(
+        "This device and the cloud both have data. OK = use cloud only (replace this device). Cancel = keep this device (no merge in this fallback)."
+      )
+        ? "replace"
+        : "keep"
+    );
+  }
+
+  async function maybeAutoPullOnBoot() {
+    const Sync = window.PFTSync;
+    if (!Sync || !Sync.isAutoOpen() || !Sync.isConfigured()) return;
+    if (!Sync.getClient()) return;
+    try {
+      const { data: u } = await Sync.getClient().auth.getUser();
+      if (!u || !u.user) return;
+      const peek = await Sync.fetchRemotePayload();
+      const dec = Sync.decideAutoOpenAction(state, peek);
+      if (dec.action === "apply" && !peek.empty) {
+        Sync.applyRemotePayload(peek.payload, peek.updated_at);
+        state = St.load();
+        initPresetsUi();
+        updateFxAuditUi();
+        refreshAllViews();
+        void renderCloudControls();
+        toast("Retrieved from cloud (auto on open)");
+        return;
+      }
+      if (dec.action === "conflict") {
+        if (typeof Sync.executeRetrieve !== "function") return;
+        const result = await Sync.executeRetrieve(chooseCloudConflict, { localSnapshot: state });
+        state = St.load();
+        initPresetsUi();
+        updateFxAuditUi();
+        refreshAllViews();
+        void renderCloudControls();
+        switch (result.outcome) {
+          case "replaced":
+            toast("Retrieved data from cloud");
+            break;
+          case "merged":
+            toast("Merged local and cloud data");
+            break;
+          case "no_backup":
+            toast("No cloud backup found yet. On a device that has your data, use Save to cloud first.");
+            break;
+          case "no_cloud_data":
+            toast("Cloud backup is empty. This device still has your local data.");
+            break;
+          case "cancelled":
+            toast("Kept this device’s data");
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (_e) {
+      /* keep local data; user can use manual retrieve */
+    }
+  }
+
   async function renderCloudControls() {
     const signin = $("#btn-cloud-signin");
     const signout = $("#btn-cloud-signout");
@@ -1670,20 +1757,7 @@
         toast("Sync module is outdated. Reload the app.");
         return false;
       }
-      const result = await Sync.executeRetrieve(
-        (ctx) => {
-          const C = window.PFTCloudConflict;
-          if (C && typeof C.prompt === "function") return C.prompt(ctx.updatedAt);
-          return Promise.resolve(
-            window.confirm(
-              "This device and the cloud both have data. OK = use cloud only (replace this device). Cancel = keep this device (no merge in this fallback)."
-            )
-              ? "replace"
-              : "keep"
-          );
-        },
-        { localSnapshot: state }
-      );
+      const result = await Sync.executeRetrieve(chooseCloudConflict, { localSnapshot: state });
       state = St.load();
       initPresetsUi();
       updateFxAuditUi();
@@ -1721,7 +1795,13 @@
     const { data } = Sync.onAuthChange((event, session) => {
       void renderCloudControls();
       if (event === "SIGNED_IN" && session && session.user) {
-        toast("Signed in — use Retrieve from cloud on a new device, or Save to cloud to upload.");
+        void maybeAutoPullOnBoot();
+        const open = Sync.isAutoOpen && Sync.isAutoOpen();
+        toast(
+          open
+            ? "Signed in — auto-restore on open is on; the app will fetch your backup when needed. You can also use Save to cloud to upload now."
+            : "Signed in — use Retrieve from cloud on a new device, or Save to cloud to upload."
+        );
       }
       if (event === "SIGNED_OUT") {
         toast("Signed out");
@@ -2478,6 +2558,13 @@
       }
     });
 
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushCloudSyncOnDocumentHide();
+    });
+    window.addEventListener("pagehide", () => {
+      flushCloudSyncOnDocumentHide();
+    });
+
     const Sync = window.PFTSync;
     if (Sync) {
       Sync.restoreSession()
@@ -2500,6 +2587,9 @@
             }
           }
           void renderCloudControls();
+          if (session) {
+            await maybeAutoPullOnBoot();
+          }
         });
     }
   }

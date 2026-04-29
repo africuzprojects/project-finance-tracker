@@ -98,8 +98,15 @@
             <span>Auto-sync after changes (2s debounce, main app)</span>
           </label>
         </div>
+        <div class="field">
+          <label class="field-label flex-row-label" for="sync-auto-open">
+            <input type="checkbox" id="sync-auto-open" />
+            <span>Auto-restore on open (main app — fetches when you sign in if cloud is newer)</span>
+          </label>
+        </div>
         <p class="field-hint" style="margin-bottom: 0.75rem">
-          On a new device, use <strong>Retrieve from cloud</strong> before <strong>Save to cloud</strong> so you don’t overwrite your backup with empty data.
+          With <strong>auto-restore on open</strong> and <strong>auto-sync</strong>, the main app saves when you switch away or close the tab (when the browser allows it) and pulls the latest after sign-in when the cloud is newer. If you rely on manual sync, on a new device use
+          <strong>Retrieve from cloud</strong> before <strong>Save to cloud</strong> so you don’t overwrite the backup with empty data.
         </p>
         <div class="top-actions" style="flex-wrap: wrap">
           <button type="button" class="btn" id="btn-sync-pull">Retrieve from cloud</button>

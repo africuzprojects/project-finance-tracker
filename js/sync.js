@@ -6,6 +6,7 @@
   const URL_KEY = "pft_supabase_url";
   const ANON_KEY = "pft_supabase_anon_key";
   const AUTO_KEY = "pft_sync_auto";
+  const AUTO_OPEN_KEY = "pft_sync_auto_open";
   const LAST_PULL = "pft_sync_last_pull_iso";
 
   let client = null;
@@ -88,6 +89,50 @@
 
   function setAutoSync(on) {
     localStorage.setItem(AUTO_KEY, on ? "1" : "0");
+  }
+
+  function isAutoOpen() {
+    return localStorage.getItem(AUTO_OPEN_KEY) === "1";
+  }
+
+  function setAutoOpen(on) {
+    localStorage.setItem(AUTO_OPEN_KEY, on ? "1" : "0");
+  }
+
+  /**
+   * @param {object} local Migrated in-memory or loaded state
+   * @param {object} peek Return value of fetchRemotePayload
+   * @returns {{ action: "apply" }|{ action: "none", reason: string }|{ action: "conflict" }}
+   */
+  function decideAutoOpenAction(local, peek) {
+    const St = global.PFTStorage;
+    if (!local || typeof local !== "object") {
+      return { action: "none", reason: "no_local" };
+    }
+    if (peek.empty) {
+      if (St.isSubstantiveState(local)) {
+        return { action: "none", reason: "no_cloud_data" };
+      }
+      return { action: "none", reason: "no_backup" };
+    }
+    const remoteMigrated = St.migrate(JSON.parse(JSON.stringify(peek.payload)));
+    if (!St.isSubstantiveState(local)) {
+      return { action: "apply" };
+    }
+    const tL = (local._meta && local._meta.lastModified) || "";
+    const tR = (remoteMigrated._meta && remoteMigrated._meta.lastModified) || "";
+    if (tL && tR) {
+      if (tR > tL) return { action: "apply" };
+      if (tL > tR) return { action: "none", reason: "local_newer" };
+      return { action: "none", reason: "in_sync" };
+    }
+    const lastR = (local._meta && local._meta.lastRemoteUpdated) || "";
+    const sAt = (peek.updated_at && String(peek.updated_at)) || "";
+    if (sAt && lastR) {
+      if (sAt > lastR) return { action: "apply" };
+      if (sAt < lastR) return { action: "none", reason: "in_sync" };
+    }
+    return { action: "conflict" };
   }
 
   function payloadFromState(state) {
@@ -295,6 +340,9 @@
     getClient,
     isAutoSync,
     setAutoSync,
+    isAutoOpen,
+    setAutoOpen,
+    decideAutoOpenAction,
     getSession,
     signIn,
     signUp,
